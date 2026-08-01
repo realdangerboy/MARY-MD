@@ -1,5 +1,4 @@
-# 🌹 MARY MD 🌹
-### 🤖 Powerful WhatsApp Bot
+# <p align="center"><b>MARY MD</b></p>
 
 <p align="center">
 <img src="https://i.ibb.co/9Hn2zkKy/file-00000000973481f5a9c7de038183683a.png" width="400"/>
@@ -12,28 +11,30 @@
 ---
 
 <div align="center">
-━━━━━━━━━━━━━━━━━━━━━━━━━━ 🌹 MARY MD 🌹 Powerful WhatsApp Bot ━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━ MARY MD WhatsApp Bot Project ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 </div>
 
-## 🌟 About MARY MD
+## About MARY MD
 
 ### 🇺🇸 English
 
-MARY MD is a powerful WhatsApp bot created to provide a fast, smooth, and advanced WhatsApp experience.  
-It comes with useful commands, group management features, security tools, entertainment features, and many more powerful functions.
+MARY MD is a powerful WhatsApp bot created to provide a fast, smooth, and advanced WhatsApp experience.
+
+It includes useful commands, group management features, security tools, entertainment features, and many more useful functions.
 
 ### 🇪🇸 Español
 
-MARY MD es un potente bot de WhatsApp creado para ofrecer una experiencia rápida, fluida y avanzada.  
-Cuenta con comandos útiles, funciones de gestión de grupos, herramientas de seguridad, entretenimiento y muchas funciones más.
+MARY MD es un potente bot de WhatsApp creado para ofrecer una experiencia rápida, fluida y avanzada.
+
+Incluye comandos útiles, funciones de gestión de grupos, herramientas de seguridad, entretenimiento y muchas funciones más.
 
 ---
 
-# ✨ Features | Características
+# Features | Características
 ━━━━━━━━━━━━━━━━━━━━━━━━━━ 🇺🇸 English Features ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🔥 Powerful WhatsApp Bot  
+🔥 WhatsApp Bot  
 🌐 English Language Support  
 🇪🇸 Español Language Support  
 ⚡ Fast Response System  
@@ -44,7 +45,7 @@ Cuenta con comandos útiles, funciones de gestión de grupos, herramientas de se
 🚀 24/7 Hosting Ready  
 ━━━━━━━━━━━━━━━━━━━━━━━━━━ 🇪🇸 Características ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🔥 Potente Bot de WhatsApp  
+🔥 Bot de WhatsApp  
 🌐 Soporte de idioma inglés  
 🇪🇸 Soporte de idioma español  
 ⚡ Sistema de respuesta rápida  
@@ -56,28 +57,26 @@ Cuenta con comandos útiles, funciones de gestión de grupos, herramientas de se
 
 ---
 
-# 🚀 Deploy MARY MD
+# Deploy MARY MD
 ━━━━━━━━━━━━━━━━━━━━━━━━━━ DEPLOY OPTIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## ⚡ Optiklink Panel
+## Optiklink Panel
 
 [![Deploy with Optiklink](https://img.shields.io/badge/Deploy%20with-Optiklink-blue?style=for-the-badge)](YOUR_OPTIKLINK_LINK)
 
 
-## 🤖 Bot Hosting
+## Bot Hosting
 
 [![Deploy with Bot Hosting](https://img.shields.io/badge/Deploy%20with-Bot%20Hosting-green?style=for-the-badge)](YOUR_BOT_HOSTING_LINK)
 
 
-## 🚀 Katabump
+## Katabump
 
 [![Deploy with Katabump](https://img.shields.io/badge/Deploy%20with-Katabump-purple?style=for-the-badge)](YOUR_KATABUMP_LINK)
 
 ---
 
-# 📢 Official WhatsApp Channel
-
-Join our official channel for updates, news, and announcements:
+# Official WhatsApp Channel
 
 <p align="center">
 
@@ -89,24 +88,19 @@ Join our official channel for updates, news, and announcements:
 
 ---
 
-# 📦 Installation
+# Installation
 
 ```bash
 git clone YOUR_REPOSITORY_LINK
-
 cd MARY-MD
-
 npm install
-
 npm start
-⚙️ Configuration
-🇺🇸 English
-Configure your bot settings before starting MARY MD.
-🇪🇸 Español
-Configura los ajustes del bot antes de iniciar MARY MD.
-❤️ Credits
+
+```
+
+# Credits
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-          🌹 MARY MD 🌹
+          MARY MD
 
       Powered By Danger Boy
 
@@ -114,7 +108,7 @@ Language Support:
 🇺🇸 English
 🇪🇸 Español
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ Disclaimer
+Disclaimer
 This project is created for educational purposes only.
 Use responsibly and follow WhatsApp rules.
 Este proyecto fue creado únicamente con fines educativos.
