@@ -99,8 +99,7 @@ npm start
 ```
 
 # Credits
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-          MARY MD
+━━━━━━━━━━MARY MD━━━━━━━━━━━
 
       Powered By Danger Boy
 
