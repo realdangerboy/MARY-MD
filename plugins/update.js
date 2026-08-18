@@ -20,9 +20,6 @@ const BRANCH = 'main'
 const RAW_BASE =
   `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`
 
-const API_BASE =
-  `https://api.github.com/repos/${OWNER}/${REPO}`
-
 const ZIP_URL =
   `https://codeload.github.com/${OWNER}/${REPO}/tar.gz/refs/heads/${BRANCH}`
 
@@ -375,12 +372,17 @@ function restartBot() {
 // ─────────────────────────────────────────────
 // CHECK UPDATE
 // ─────────────────────────────────────────────
+//
+// This command is purely informational — it tells the
+// owner whether a newer version exists and shows the
+// changelog for it. It never blocks the `update` command.
+// ─────────────────────────────────────────────
 
 async function checkUpdate(m, conn) {
   const sent = await conn.sendMessage(
     m.chat,
     {
-      text: '🔎 Checking for MARY MD updates...'
+      text: '🔎 Checking for updates...'
     },
     {
       quoted: m
@@ -424,8 +426,6 @@ async function checkUpdate(m, conn) {
       )
     }
 
-    // ONLY CHANGELOG.MD
-    // NO GITHUB COMMITS
     const changelog =
       await getRemoteChangelog()
 
@@ -435,17 +435,9 @@ async function checkUpdate(m, conn) {
         remoteVersion
       )
 
-    let changelogText
-
-    if (versionChangelog) {
-      changelogText =
-        formatChangelog(
-          versionChangelog
-        )
-    } else {
-      changelogText =
-        'No changelog available for this version.'
-    }
+    const changelogText = versionChangelog
+      ? formatChangelog(versionChangelog)
+      : 'No changelog available for this version.'
 
     const message =
 `╭━━━〔 🆕 UPDATE AVAILABLE 〕━━━
@@ -494,15 +486,18 @@ ${error.message}`,
 // ─────────────────────────────────────────────
 // UPDATE BOT
 // ─────────────────────────────────────────────
+//
+// Always pulls and installs the latest files from the
+// repo, regardless of whether package.json's version
+// number changed. A pushed plugin or fix is enough —
+// version bumps are not required for `update` to work.
+// ─────────────────────────────────────────────
 
 async function updateBot(m, conn) {
   const sent = await conn.sendMessage(
     m.chat,
     {
-      text:
-`⏳ *Starting MARY MD update...*
-
-🔐 WhatsApp session will be preserved.`
+      text: '⏳ *Updating the bot...*'
     },
     {
       quoted: m
@@ -512,51 +507,6 @@ async function updateBot(m, conn) {
   let tempDir = null
 
   try {
-    const localPackage =
-      await getLocalPackage()
-
-    const remotePackage =
-      await getRemotePackage()
-
-    const localVersion =
-      localPackage.version || '1.0.0'
-
-    const remoteVersion =
-      remotePackage.version || localVersion
-
-    // Already latest
-    if (
-      compareVersions(
-        remoteVersion,
-        localVersion
-      ) <= 0
-    ) {
-      return await conn.sendMessage(
-        m.chat,
-        {
-          text:
-`✅ *MARY MD is already up to date.*
-
-📦 Version: *${localVersion}*`,
-          edit: sent.key
-        }
-      )
-    }
-
-    await conn.sendMessage(
-      m.chat,
-      {
-        text:
-`⏳ *Downloading update...*
-
-📦 ${localVersion} → ${remoteVersion}
-
-🔐 Session protection: *ACTIVE*`,
-        edit: sent.key
-      }
-    )
-
-    // Temporary directory
     tempDir = await fs.mkdtemp(
       path.join(
         os.tmpdir(),
@@ -564,46 +514,14 @@ async function updateBot(m, conn) {
       )
     )
 
-    // Download GitHub repository
     const source =
       await downloadRepository(
         tempDir
       )
 
-    await conn.sendMessage(
-      m.chat,
-      {
-        text:
-`📥 *Download complete.*
-
-📦 Installing MARY MD ${remoteVersion}...`,
-        edit: sent.key
-      }
-    )
-
-    // Update repository files
-    //
-    // sessions/
-    // data/
-    // tmp/
-    // node_modules/
-    // .env
-    //
-    // are NOT touched.
     await copyUpdatedFiles(
       source,
       process.cwd()
-    )
-
-    await conn.sendMessage(
-      m.chat,
-      {
-        text:
-`📦 *Files installed.*
-
-⏳ Installing dependencies...`,
-        edit: sent.key
-      }
     )
 
     await installDependencies()
@@ -611,31 +529,11 @@ async function updateBot(m, conn) {
     await conn.sendMessage(
       m.chat,
       {
-        text:
-`╭━━━〔 ✅ UPDATE COMPLETE 〕━━━
-┃
-┃ 📦 Version:
-┃ *${localVersion}* → *${remoteVersion}*
-┃
-┃ 🔐 WhatsApp Session:
-┃ *PRESERVED*
-┃
-┃ 📁 sessions/
-┃ *NOT TOUCHED*
-┃
-┃ 📁 data/
-┃ *NOT TOUCHED*
-┃
-┃ 📁 tmp/
-┃ *NOT TOUCHED*
-┃
-┃ 🔄 Restarting bot...
-╰━━━━━━━━━━━━━━━━━━━━`
+        text: '✅ *Update complete.* Restarting...',
+        edit: sent.key
       }
     )
 
-    // Give WhatsApp time to send message
-    // then restart process.
     restartBot()
 
   } catch (error) {
@@ -647,12 +545,7 @@ async function updateBot(m, conn) {
     return await conn.sendMessage(
       m.chat,
       {
-        text:
-`❌ *Update failed.*
-
-${error.message}
-
-🔐 Your WhatsApp session was not intentionally modified.`,
+        text: '❌ *Update failed.* Please try again later.',
         edit: sent.key
       }
     )
@@ -678,10 +571,7 @@ async function restartOnly(m, conn) {
   await conn.sendMessage(
     m.chat,
     {
-      text:
-`🔄 *Restarting MARY MD...*
-
-🔐 WhatsApp session will be preserved.`
+      text: '🔄 *Restarting...*'
     },
     {
       quoted: m
