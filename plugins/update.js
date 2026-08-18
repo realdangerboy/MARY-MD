@@ -1,102 +1,222 @@
 // plugins/update.js
 
-import { exec } from 'child_process'
-import { promisify } from 'util'
 import fs from 'fs/promises'
+import path from 'path'
+import os from 'os'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import axios from 'axios'
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
-const REPO = 'https://github.com/realdangerboy/MARY-MD.git'
+const OWNER = 'realdangerboy'
+const REPO = 'MARY-MD'
 const BRANCH = 'main'
-const RAW = 'https://raw.githubusercontent.com/realdangerboy/MARY-MD/main'
 
-async function getLocalVersion() {
+const API_URL = `https://api.github.com/repos/${OWNER}/${REPO}`
+const ZIP_URL = `https://codeload.github.com/${OWNER}/${REPO}/tar.gz/refs/heads/${BRANCH}`
+
+const PROTECTED = [
+  'sessions',
+  'sessions/',
+  'data',
+  'data/',
+  'tmp',
+  'tmp/',
+  'node_modules',
+  'node_modules/',
+  '.env'
+]
+
+function isProtected(name) {
+  const clean = name.replace(/\\/g, '/').replace(/^\/+/, '')
+
+  return PROTECTED.some(item =>
+    clean === item.replace(/\/$/, '') ||
+    clean.startsWith(item)
+  )
+}
+
+async function getLocalPackage() {
   try {
-    const pkg = JSON.parse(await fs.readFile('./package.json', 'utf8'))
-    return pkg.version || '1.0.0'
+    return JSON.parse(
+      await fs.readFile('./package.json', 'utf8')
+    )
   } catch {
-    return '1.0.0'
+    return { version: '1.0.0' }
   }
 }
 
 async function getRemotePackage() {
-  const { data } = await axios.get(`${RAW}/package.json`, {
-    timeout: 15000,
-    headers: { 'User-Agent': 'MARY-MD-Updater' }
-  })
-  return data
+  const { data } = await axios.get(
+    `${API_URL}/contents/package.json?ref=${BRANCH}`,
+    {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'MARY-MD-Updater'
+      }
+    }
+  )
+
+  const content = Buffer.from(data.content, 'base64').toString('utf8')
+  return JSON.parse(content)
 }
 
-function compareVersions(remote, local) {
-  const r = String(remote).split('.').map(Number)
-  const l = String(local).split('.').map(Number)
-
-  for (let i = 0; i < 3; i++) {
-    const rv = r[i] || 0
-    const lv = l[i] || 0
-
-    if (rv > lv) return 1
-    if (rv < lv) return -1
-  }
-
-  return 0
-}
-
-async function getGitCommits() {
+async function getChangelog() {
   try {
-    await execAsync('git fetch origin main --quiet', {
-      timeout: 60000
-    })
-
-    const { stdout } = await execAsync(
-      'git log HEAD..origin/main --pretty=format:%s',
-      { timeout: 30000 }
+    const { data } = await axios.get(
+      `${API_URL}/contents/changelog.json?ref=${BRANCH}`,
+      {
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'MARY-MD-Updater'
+        }
+      }
     )
 
-    return stdout
-      .split('\n')
-      .map(x => x.trim())
-      .filter(Boolean)
+    return JSON.parse(
+      Buffer.from(data.content, 'base64').toString('utf8')
+    )
+  } catch {
+    return null
+  }
+}
+
+async function getLatestCommits() {
+  try {
+    const { data } = await axios.get(
+      `${API_URL}/commits?sha=${BRANCH}&per_page=10`,
+      {
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'MARY-MD-Updater'
+        }
+      }
+    )
+
+    return data.map(commit => ({
+      message: commit.commit?.message?.split('\n')[0] || 'Update',
+      date: commit.commit?.author?.date || ''
+    }))
   } catch {
     return []
   }
 }
 
-async function isGitRepo() {
+function compareVersions(a, b) {
+  const A = String(a).split('.').map(Number)
+  const B = String(b).split('.').map(Number)
+
+  for (let i = 0; i < 3; i++) {
+    const x = A[i] || 0
+    const y = B[i] || 0
+
+    if (x > y) return 1
+    if (x < y) return -1
+  }
+
+  return 0
+}
+
+async function downloadRepo(tempDir) {
+  const archive = path.join(tempDir, 'mary-md.tar.gz')
+
+  const response = await axios.get(ZIP_URL, {
+    responseType: 'arraybuffer',
+    timeout: 180000,
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+    headers: {
+      'User-Agent': 'MARY-MD-Updater'
+    }
+  })
+
+  await fs.writeFile(archive, response.data)
+
+  const extractDir = path.join(tempDir, 'extract')
+  await fs.mkdir(extractDir, { recursive: true })
+
+  await execFileAsync(
+    'tar',
+    ['-xzf', archive, '-C', extractDir],
+    {
+      timeout: 180000
+    }
+  )
+
+  const entries = await fs.readdir(extractDir)
+
+  if (!entries.length) {
+    throw new Error('GitHub archive is empty.')
+  }
+
+  return path.join(extractDir, entries[0])
+}
+
+async function copyUpdatedFiles(source, destination) {
+  const entries = await fs.readdir(source, {
+    withFileTypes: true
+  })
+
+  for (const entry of entries) {
+    const name = entry.name
+
+    if (isProtected(name)) {
+      continue
+    }
+
+    const src = path.join(source, name)
+    const dest = path.join(destination, name)
+
+    if (entry.isDirectory()) {
+      await fs.mkdir(dest, { recursive: true })
+      await copyUpdatedFiles(src, dest)
+    } else {
+      await fs.mkdir(path.dirname(dest), {
+        recursive: true
+      })
+
+      await fs.copyFile(src, dest)
+    }
+  }
+}
+
+async function installDependencies() {
   try {
-    await execAsync('git rev-parse --is-inside-work-tree')
+    await execFileAsync(
+      'npm',
+      ['install', '--omit=dev', '--no-audit', '--no-fund'],
+      {
+        timeout: 300000,
+        cwd: process.cwd()
+      }
+    )
+
     return true
-  } catch {
+  } catch (error) {
+    console.error(
+      '[MARY MD] npm install error:',
+      error.stderr || error.message
+    )
+
     return false
   }
 }
 
-async function updateBot() {
-  /*
-   * IMPORTANT:
-   * sessions/ is NEVER deleted or modified here.
-   *
-   * The updater only performs git pull.
-   * Existing WhatsApp authentication remains untouched.
-   */
-
-  await execAsync('git fetch origin main', {
-    timeout: 120000
-  })
-
-  await execAsync('git pull --ff-only origin main', {
-    timeout: 180000
-  })
+async function restartBot() {
+  setTimeout(() => {
+    process.exit(0)
+  }, 2000)
 }
 
 const handler = async (m, { conn, command }) => {
-  const cmd = String(command || '').toLowerCase()
 
-  // ─────────────────────────────────────────────
+  // ═════════════════════════════════════════════
   // CHECK UPDATE
-  // ─────────────────────────────────────────────
-  if (cmd === 'checkupdate') {
+  // ═════════════════════════════════════════════
+
+  if (command === 'checkupdate') {
+
     const sent = await conn.sendMessage(
       m.chat,
       {
@@ -106,35 +226,38 @@ const handler = async (m, { conn, command }) => {
     )
 
     try {
-      if (!(await isGitRepo())) {
-        return await conn.sendMessage(
-          m.chat,
-          {
-            text: '❌ This bot is not running from a Git repository.',
-            edit: sent.key
-          }
-        )
-      }
 
-      const localVersion = await getLocalVersion()
-      const remotePackage = await getRemotePackage()
-      const remoteVersion = remotePackage.version || localVersion
+      const localPkg = await getLocalPackage()
+      const remotePkg = await getRemotePackage()
 
-      const commits = await getGitCommits()
-      const versionStatus = compareVersions(remoteVersion, localVersion)
+      const localVersion =
+        localPkg.version || '1.0.0'
 
-      if (versionStatus <= 0 && commits.length === 0) {
+      const remoteVersion =
+        remotePkg.version || localVersion
+
+      const changelog = await getChangelog()
+      const commits = await getLatestCommits()
+
+      const versionChanged =
+        compareVersions(
+          remoteVersion,
+          localVersion
+        ) > 0
+
+      if (!versionChanged) {
+
         return await conn.sendMessage(
           m.chat,
           {
             text:
-`╭━━━〔 MARY MD UPDATE 〕━━━
+`╭━━━〔 MARY MD 〕━━━
 ┃
-┃ ✅ *Bot is up to date*
+┃ ✅ *Already up to date*
 ┃
 ┃ 📦 Version: *${localVersion}*
 ┃
-╰━━━━━━━━━━━━━━━━━━━━`
+╰━━━━━━━━━━━━━━`
             ,
             edit: sent.key
           }
@@ -145,80 +268,113 @@ const handler = async (m, { conn, command }) => {
 `╭━━━〔 🆕 UPDATE AVAILABLE 〕━━━
 ┃
 ┃ 📦 Current: *${localVersion}*
-┃ 📦 Latest: *${remoteVersion}*
+┃ 📦 New: *${remoteVersion}*
 ┃
 ┃ 📝 *CHANGELOG*
-┃`
+┃
+`
 
-      if (commits.length) {
-        commits.slice(0, 15).forEach((commit, i) => {
-          text += `┃ ${i + 1}. ${commit}\n`
-        })
+      if (
+        changelog &&
+        Array.isArray(changelog.changes)
+      ) {
+
+        for (
+          const change of changelog.changes.slice(0, 15)
+        ) {
+
+          const title =
+            change.title ||
+            change.description ||
+            'Update'
+
+          text += `┃ • ${title}\n`
+        }
+
+      } else if (commits.length) {
+
+        for (
+          const commit of commits.slice(0, 10)
+        ) {
+
+          text += `┃ • ${commit.message}\n`
+        }
+
       } else {
-        text += `┃ • New MARY MD release available\n`
+
+        text +=
+          `┃ • New features and fixes\n`
       }
 
       text +=
-`┃
-┃ Use *update* to install it.
+`
+┃
+┃ Use *update* to install.
 ┃
 ╰━━━━━━━━━━━━━━━━━━━━`
 
       return await conn.sendMessage(
         m.chat,
-        { text, edit: sent.key }
+        {
+          text,
+          edit: sent.key
+        }
       )
 
     } catch (error) {
-      console.error('[UPDATE CHECK ERROR]', error)
+
+      console.error(
+        '[CHECKUPDATE ERROR]',
+        error.message
+      )
 
       return await conn.sendMessage(
         m.chat,
         {
           text:
-`❌ *Update check failed.*
+`❌ *Failed to check updates.*
 
-${error.message || 'Unable to contact GitHub.'}`,
+${error.message}`,
           edit: sent.key
         }
       )
     }
   }
 
-  // ─────────────────────────────────────────────
+  // ═════════════════════════════════════════════
   // UPDATE
-  // ─────────────────────────────────────────────
-  if (cmd === 'update') {
+  // ═════════════════════════════════════════════
+
+  if (command === 'update') {
+
     const sent = await conn.sendMessage(
       m.chat,
       {
-        text: '⏳ Updating MARY MD...'
+        text: '⏳ Downloading MARY MD update...'
       },
       { quoted: m }
     )
 
+    let tempDir = null
+
     try {
-      if (!(await isGitRepo())) {
-        return await conn.sendMessage(
-          m.chat,
-          {
-            text:
-              '❌ This bot is not running from a Git repository.',
-            edit: sent.key
-          }
-        )
-      }
 
-      const localVersion = await getLocalVersion()
-      const remotePackage = await getRemotePackage()
-      const remoteVersion = remotePackage.version || localVersion
+      const localPkg = await getLocalPackage()
+      const remotePkg = await getRemotePackage()
 
-      const commits = await getGitCommits()
+      const localVersion =
+        localPkg.version || '1.0.0'
+
+      const remoteVersion =
+        remotePkg.version || localVersion
 
       if (
-        compareVersions(remoteVersion, localVersion) <= 0 &&
-        commits.length === 0
+        compareVersions(
+          remoteVersion,
+          localVersion
+        ) <= 0
       ) {
+
         return await conn.sendMessage(
           m.chat,
           {
@@ -235,18 +391,54 @@ ${error.message || 'Unable to contact GitHub.'}`,
         m.chat,
         {
           text:
-`⏳ *Installing update...*
+`⏳ *Updating MARY MD...*
 
 📦 ${localVersion} → ${remoteVersion}
 
-🔐 WhatsApp session will NOT be touched.`,
+🔐 WhatsApp session will be preserved.`
+          ,
           edit: sent.key
         }
       )
 
-      // Update repository.
-      // sessions/ is intentionally never deleted.
-      await updateBot()
+      // Temporary directory outside bot files
+      tempDir = await fs.mkdtemp(
+        path.join(
+          os.tmpdir(),
+          'mary-md-update-'
+        )
+      )
+
+      // Download GitHub repository
+      const source = await downloadRepo(tempDir)
+
+      // Update files.
+      // sessions/, data/, tmp/, node_modules and .env
+      // are explicitly protected.
+      await copyUpdatedFiles(
+        source,
+        process.cwd()
+      )
+
+      // Install new dependencies if package.json changed
+      await conn.sendMessage(
+        m.chat,
+        {
+          text:
+`📦 Files updated.
+
+⏳ Installing dependencies...`,
+          edit: sent.key
+        }
+      )
+
+      const npmOk = await installDependencies()
+
+      if (!npmOk) {
+        console.log(
+          '[MARY MD] npm install failed. Continuing restart.'
+        )
+      }
 
       await conn.sendMessage(
         m.chat,
@@ -254,21 +446,29 @@ ${error.message || 'Unable to contact GitHub.'}`,
           text:
 `╭━━━〔 ✅ UPDATE COMPLETE 〕━━━
 ┃
-┃ 📦 Version: *${remoteVersion}*
+┃ 📦 Version:
+┃ ${localVersion} → ${remoteVersion}
 ┃
-┃ 🔐 Session preserved
+┃ 🔐 Session: PRESERVED
 ┃
-┃ 🔄 Restarting bot...
+┃ 📁 sessions/: untouched
+┃ 📁 data/: untouched
+┃ 📁 tmp/: untouched
+┃
+┃ 🔄 Restarting...
 ╰━━━━━━━━━━━━━━━━━━━━`
         }
       )
 
-      setTimeout(() => {
-        process.exit(0)
-      }, 2000)
+      // Restart process
+      await restartBot()
 
     } catch (error) {
-      console.error('[UPDATE ERROR]', error)
+
+      console.error(
+        '[UPDATE ERROR]',
+        error.stack || error.message
+      )
 
       return await conn.sendMessage(
         m.chat,
@@ -276,36 +476,49 @@ ${error.message || 'Unable to contact GitHub.'}`,
           text:
 `❌ *Update failed.*
 
-${error.message || 'Unknown error'}
+${error.message}
 
-🔐 Your WhatsApp session was not intentionally removed.`
+🔐 Your WhatsApp session was not intentionally modified.`,
+          edit: sent.key
         }
       )
+
+    } finally {
+
+      if (tempDir) {
+        await fs.rm(
+          tempDir,
+          {
+            recursive: true,
+            force: true
+          }
+        ).catch(() => {})
+      }
     }
 
     return
   }
 
-  // ─────────────────────────────────────────────
+  // ═════════════════════════════════════════════
   // RESTART
-  // ─────────────────────────────────────────────
-  if (cmd === 'restart') {
-    const sent = await conn.sendMessage(
+  // ═════════════════════════════════════════════
+
+  if (command === 'restart') {
+
+    await conn.sendMessage(
       m.chat,
       {
         text:
 `🔄 *Restarting MARY MD...*
 
-Please wait...`
+🔐 WhatsApp session will be preserved.`
       },
       { quoted: m }
     )
 
-    setTimeout(() => {
-      process.exit(0)
-    }, 1500)
+    await restartBot()
 
-    return sent
+    return
   }
 }
 
@@ -315,7 +528,9 @@ handler.help = [
   'restart'
 ]
 
-handler.tags = ['owner']
+handler.tags = [
+  'owner'
+]
 
 handler.command = [
   'checkupdate',
