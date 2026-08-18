@@ -77,12 +77,16 @@ async function getLocalPackage() {
 // ─────────────────────────────────────────────
 
 async function getRemotePackage() {
-  const url = `${RAW_BASE}/package.json`
+  // Cache-buster: raw.githubusercontent.com caches files for a
+  // few minutes. Without this, a just-pushed version bump can
+  // still return the old package.json for a while.
+  const url = `${RAW_BASE}/package.json?_=${Date.now()}`
 
   const response = await axios.get(url, {
     timeout: 15000,
     headers: {
-      'User-Agent': 'MARY-MD-Updater'
+      'User-Agent': 'MARY-MD-Updater',
+      'Cache-Control': 'no-cache'
     }
   })
 
@@ -94,14 +98,15 @@ async function getRemotePackage() {
 // ─────────────────────────────────────────────
 
 async function getRemoteChangelog() {
-  const url = `${RAW_BASE}/CHANGELOG.md`
+  const url = `${RAW_BASE}/CHANGELOG.md?_=${Date.now()}`
 
   try {
     const response = await axios.get(url, {
       timeout: 15000,
       responseType: 'text',
       headers: {
-        'User-Agent': 'MARY-MD-Updater'
+        'User-Agent': 'MARY-MD-Updater',
+        'Cache-Control': 'no-cache'
       }
     })
 
@@ -417,7 +422,8 @@ async function checkUpdate(m, conn) {
 ┃
 ┃ ✅ *Bot is up to date*
 ┃
-┃ 📦 Version: *${localVersion}*
+┃ 📦 Local: *${localVersion}*
+┃ 📦 Remote: *${remoteVersion}*
 ┃
 ╰━━━━━━━━━━━━━━━━`
           ,
