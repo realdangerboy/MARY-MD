@@ -9,33 +9,59 @@ import axios from 'axios'
 
 const execFileAsync = promisify(execFile)
 
+// ─────────────────────────────────────────────
+// GITHUB CONFIG
+// ─────────────────────────────────────────────
+
 const OWNER = 'realdangerboy'
 const REPO = 'MARY-MD'
 const BRANCH = 'main'
 
-const API_URL = `https://api.github.com/repos/${OWNER}/${REPO}`
-const ZIP_URL = `https://codeload.github.com/${OWNER}/${REPO}/tar.gz/refs/heads/${BRANCH}`
+const RAW_BASE =
+  `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`
+
+const API_BASE =
+  `https://api.github.com/repos/${OWNER}/${REPO}`
+
+const ZIP_URL =
+  `https://codeload.github.com/${OWNER}/${REPO}/tar.gz/refs/heads/${BRANCH}`
+
+// ─────────────────────────────────────────────
+// PROTECTED FILES / DIRECTORIES
+// ─────────────────────────────────────────────
+//
+// These are NEVER replaced by the updater.
+//
+// sessions = WhatsApp login/session
+// data     = bot database/settings
+// tmp      = temporary files
+// .env     = environment variables
+// node_modules = installed modules
+// ─────────────────────────────────────────────
 
 const PROTECTED = [
   'sessions',
-  'sessions/',
   'data',
-  'data/',
   'tmp',
-  'tmp/',
   'node_modules',
-  'node_modules/',
   '.env'
 ]
 
 function isProtected(name) {
-  const clean = name.replace(/\\/g, '/').replace(/^\/+/, '')
+  const clean = name
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
 
   return PROTECTED.some(item =>
-    clean === item.replace(/\/$/, '') ||
-    clean.startsWith(item)
+    clean === item ||
+    clean.startsWith(`${item}/`)
   )
 }
+
+// ─────────────────────────────────────────────
+// LOCAL PACKAGE
+// ─────────────────────────────────────────────
 
 async function getLocalPackage() {
   try {
@@ -43,69 +69,65 @@ async function getLocalPackage() {
       await fs.readFile('./package.json', 'utf8')
     )
   } catch {
-    return { version: '1.0.0' }
+    return {
+      version: '1.0.0'
+    }
   }
 }
 
+// ─────────────────────────────────────────────
+// REMOTE PACKAGE
+// ─────────────────────────────────────────────
+
 async function getRemotePackage() {
-  const { data } = await axios.get(
-    `${API_URL}/contents/package.json?ref=${BRANCH}`,
-    {
+  const url = `${RAW_BASE}/package.json`
+
+  const response = await axios.get(url, {
+    timeout: 15000,
+    headers: {
+      'User-Agent': 'MARY-MD-Updater'
+    }
+  })
+
+  return response.data
+}
+
+// ─────────────────────────────────────────────
+// GET CHANGELOG.MD
+// ─────────────────────────────────────────────
+
+async function getRemoteChangelog() {
+  const url = `${RAW_BASE}/CHANGELOG.md`
+
+  try {
+    const response = await axios.get(url, {
       timeout: 15000,
+      responseType: 'text',
       headers: {
         'User-Agent': 'MARY-MD-Updater'
       }
-    }
-  )
+    })
 
-  const content = Buffer.from(data.content, 'base64').toString('utf8')
-  return JSON.parse(content)
-}
-
-async function getChangelog() {
-  try {
-    const { data } = await axios.get(
-      `${API_URL}/contents/changelog.json?ref=${BRANCH}`,
-      {
-        timeout: 15000,
-        headers: {
-          'User-Agent': 'MARY-MD-Updater'
-        }
-      }
-    )
-
-    return JSON.parse(
-      Buffer.from(data.content, 'base64').toString('utf8')
-    )
+    return response.data
   } catch {
     return null
   }
 }
 
-async function getLatestCommits() {
-  try {
-    const { data } = await axios.get(
-      `${API_URL}/commits?sha=${BRANCH}&per_page=10`,
-      {
-        timeout: 15000,
-        headers: {
-          'User-Agent': 'MARY-MD-Updater'
-        }
-      }
-    )
-
-    return data.map(commit => ({
-      message: commit.commit?.message?.split('\n')[0] || 'Update',
-      date: commit.commit?.author?.date || ''
-    }))
-  } catch {
-    return []
-  }
-}
+// ─────────────────────────────────────────────
+// VERSION COMPARISON
+// ─────────────────────────────────────────────
 
 function compareVersions(a, b) {
-  const A = String(a).split('.').map(Number)
-  const B = String(b).split('.').map(Number)
+  const A = String(a)
+    .replace(/^v/i, '')
+    .split('.')
+    .map(Number)
+
+  const B = String(b)
+    .replace(/^v/i, '')
+    .split('.')
+    .map(Number)
 
   for (let i = 0; i < 3; i++) {
     const x = A[i] || 0
@@ -118,8 +140,79 @@ function compareVersions(a, b) {
   return 0
 }
 
-async function downloadRepo(tempDir) {
-  const archive = path.join(tempDir, 'mary-md.tar.gz')
+// ─────────────────────────────────────────────
+// EXTRACT VERSION SECTION FROM CHANGELOG
+// ─────────────────────────────────────────────
+
+function getVersionChangelog(markdown, version) {
+  if (!markdown) return null
+
+  const cleanVersion = String(version)
+    .replace(/^v/i, '')
+    .trim()
+
+  const lines = markdown.split(/\r?\n/)
+
+  const startRegex = new RegExp(
+    `^##\\s+\\[?v?${cleanVersion.replace(/\./g, '\\.')}\\]?\\s*$`,
+    'i'
+  )
+
+  let start = -1
+
+  for (let i = 0; i < lines.length; i++) {
+    if (startRegex.test(lines[i].trim())) {
+      start = i
+      break
+    }
+  }
+
+  // Version section not found
+  if (start === -1) {
+    return null
+  }
+
+  const result = []
+
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s+/i.test(lines[i].trim())) {
+      break
+    }
+
+    result.push(lines[i])
+  }
+
+  return result
+    .join('\n')
+    .trim()
+}
+
+// ─────────────────────────────────────────────
+// CLEAN MARKDOWN FOR WHATSAPP
+// ─────────────────────────────────────────────
+
+function formatChangelog(text) {
+  if (!text) {
+    return 'No changelog available for this version.'
+  }
+
+  return text
+    .replace(/^###\s+(.+)$/gm, '*$1*')
+    .replace(/^####\s+(.+)$/gm, '*$1*')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/^\s*>\s?/gm, '')
+    .trim()
+}
+
+// ─────────────────────────────────────────────
+// DOWNLOAD COMPLETE REPOSITORY
+// ─────────────────────────────────────────────
+
+async function downloadRepository(tempDir) {
+  const archive = path.join(
+    tempDir,
+    'mary-md-update.tar.gz'
+  )
 
   const response = await axios.get(ZIP_URL, {
     responseType: 'arraybuffer',
@@ -131,71 +224,137 @@ async function downloadRepo(tempDir) {
     }
   })
 
-  await fs.writeFile(archive, response.data)
+  await fs.writeFile(
+    archive,
+    response.data
+  )
 
-  const extractDir = path.join(tempDir, 'extract')
-  await fs.mkdir(extractDir, { recursive: true })
+  const extractDir = path.join(
+    tempDir,
+    'extract'
+  )
+
+  await fs.mkdir(
+    extractDir,
+    {
+      recursive: true
+    }
+  )
 
   await execFileAsync(
     'tar',
-    ['-xzf', archive, '-C', extractDir],
+    [
+      '-xzf',
+      archive,
+      '-C',
+      extractDir
+    ],
     {
       timeout: 180000
     }
   )
 
-  const entries = await fs.readdir(extractDir)
+  const folders = await fs.readdir(
+    extractDir
+  )
 
-  if (!entries.length) {
-    throw new Error('GitHub archive is empty.')
+  if (!folders.length) {
+    throw new Error(
+      'GitHub update archive is empty.'
+    )
   }
 
-  return path.join(extractDir, entries[0])
+  return path.join(
+    extractDir,
+    folders[0]
+  )
 }
 
-async function copyUpdatedFiles(source, destination) {
-  const entries = await fs.readdir(source, {
-    withFileTypes: true
-  })
+// ─────────────────────────────────────────────
+// COPY UPDATED FILES
+// ─────────────────────────────────────────────
+
+async function copyUpdatedFiles(
+  source,
+  destination
+) {
+  const entries = await fs.readdir(
+    source,
+    {
+      withFileTypes: true
+    }
+  )
 
   for (const entry of entries) {
     const name = entry.name
 
+    // NEVER TOUCH PROTECTED FILES
     if (isProtected(name)) {
       continue
     }
 
-    const src = path.join(source, name)
-    const dest = path.join(destination, name)
+    const src = path.join(
+      source,
+      name
+    )
+
+    const dest = path.join(
+      destination,
+      name
+    )
 
     if (entry.isDirectory()) {
-      await fs.mkdir(dest, { recursive: true })
-      await copyUpdatedFiles(src, dest)
-    } else {
-      await fs.mkdir(path.dirname(dest), {
-        recursive: true
-      })
+      await fs.mkdir(
+        dest,
+        {
+          recursive: true
+        }
+      )
 
-      await fs.copyFile(src, dest)
+      await copyUpdatedFiles(
+        src,
+        dest
+      )
+    } else {
+      await fs.mkdir(
+        path.dirname(dest),
+        {
+          recursive: true
+        }
+      )
+
+      await fs.copyFile(
+        src,
+        dest
+      )
     }
   }
 }
+
+// ─────────────────────────────────────────────
+// NPM INSTALL
+// ─────────────────────────────────────────────
 
 async function installDependencies() {
   try {
     await execFileAsync(
       'npm',
-      ['install', '--omit=dev', '--no-audit', '--no-fund'],
+      [
+        'install',
+        '--omit=dev',
+        '--no-audit',
+        '--no-fund'
+      ],
       {
-        timeout: 300000,
-        cwd: process.cwd()
+        cwd: process.cwd(),
+        timeout: 300000
       }
     )
 
     return true
   } catch (error) {
     console.error(
-      '[MARY MD] npm install error:',
+      '[MARY MD] npm install failed:',
       error.stderr || error.message
     )
 
@@ -203,68 +362,92 @@ async function installDependencies() {
   }
 }
 
-async function restartBot() {
+// ─────────────────────────────────────────────
+// RESTART
+// ─────────────────────────────────────────────
+
+function restartBot() {
   setTimeout(() => {
     process.exit(0)
   }, 2000)
 }
 
-const handler = async (m, { conn, command }) => {
+// ─────────────────────────────────────────────
+// CHECK UPDATE
+// ─────────────────────────────────────────────
 
-  // ═════════════════════════════════════════════
-  // CHECK UPDATE
-  // ═════════════════════════════════════════════
+async function checkUpdate(m, conn) {
+  const sent = await conn.sendMessage(
+    m.chat,
+    {
+      text: '🔎 Checking for MARY MD updates...'
+    },
+    {
+      quoted: m
+    }
+  )
 
-  if (command === 'checkupdate') {
+  try {
+    const localPackage =
+      await getLocalPackage()
 
-    const sent = await conn.sendMessage(
-      m.chat,
-      {
-        text: '🔎 Checking for MARY MD updates...'
-      },
-      { quoted: m }
-    )
+    const remotePackage =
+      await getRemotePackage()
 
-    try {
+    const localVersion =
+      localPackage.version || '1.0.0'
 
-      const localPkg = await getLocalPackage()
-      const remotePkg = await getRemotePackage()
+    const remoteVersion =
+      remotePackage.version || localVersion
 
-      const localVersion =
-        localPkg.version || '1.0.0'
+    const updateAvailable =
+      compareVersions(
+        remoteVersion,
+        localVersion
+      ) > 0
 
-      const remoteVersion =
-        remotePkg.version || localVersion
-
-      const changelog = await getChangelog()
-      const commits = await getLatestCommits()
-
-      const versionChanged =
-        compareVersions(
-          remoteVersion,
-          localVersion
-        ) > 0
-
-      if (!versionChanged) {
-
-        return await conn.sendMessage(
-          m.chat,
-          {
-            text:
+    if (!updateAvailable) {
+      return await conn.sendMessage(
+        m.chat,
+        {
+          text:
 `╭━━━〔 MARY MD 〕━━━
 ┃
-┃ ✅ *Already up to date*
+┃ ✅ *Bot is up to date*
 ┃
 ┃ 📦 Version: *${localVersion}*
 ┃
-╰━━━━━━━━━━━━━━`
-            ,
-            edit: sent.key
-          }
-        )
-      }
+╰━━━━━━━━━━━━━━━━`
+          ,
+          edit: sent.key
+        }
+      )
+    }
 
-      let text =
+    // ONLY CHANGELOG.MD
+    // NO GITHUB COMMITS
+    const changelog =
+      await getRemoteChangelog()
+
+    const versionChangelog =
+      getVersionChangelog(
+        changelog,
+        remoteVersion
+      )
+
+    let changelogText
+
+    if (versionChangelog) {
+      changelogText =
+        formatChangelog(
+          versionChangelog
+        )
+    } else {
+      changelogText =
+        'No changelog available for this version.'
+    }
+
+    const message =
 `╭━━━〔 🆕 UPDATE AVAILABLE 〕━━━
 ┃
 ┃ 📦 Current: *${localVersion}*
@@ -272,255 +455,279 @@ const handler = async (m, { conn, command }) => {
 ┃
 ┃ 📝 *CHANGELOG*
 ┃
-`
-
-      if (
-        changelog &&
-        Array.isArray(changelog.changes)
-      ) {
-
-        for (
-          const change of changelog.changes.slice(0, 15)
-        ) {
-
-          const title =
-            change.title ||
-            change.description ||
-            'Update'
-
-          text += `┃ • ${title}\n`
-        }
-
-      } else if (commits.length) {
-
-        for (
-          const commit of commits.slice(0, 10)
-        ) {
-
-          text += `┃ • ${commit.message}\n`
-        }
-
-      } else {
-
-        text +=
-          `┃ • New features and fixes\n`
-      }
-
-      text +=
-`
+${changelogText
+  .split('\n')
+  .map(line => `┃ ${line}`)
+  .join('\n')}
 ┃
 ┃ Use *update* to install.
 ┃
 ╰━━━━━━━━━━━━━━━━━━━━`
 
-      return await conn.sendMessage(
-        m.chat,
-        {
-          text,
-          edit: sent.key
-        }
-      )
+    return await conn.sendMessage(
+      m.chat,
+      {
+        text: message,
+        edit: sent.key
+      }
+    )
 
-    } catch (error) {
+  } catch (error) {
+    console.error(
+      '[CHECKUPDATE ERROR]',
+      error.stack || error.message
+    )
 
-      console.error(
-        '[CHECKUPDATE ERROR]',
-        error.message
-      )
-
-      return await conn.sendMessage(
-        m.chat,
-        {
-          text:
+    return await conn.sendMessage(
+      m.chat,
+      {
+        text:
 `❌ *Failed to check updates.*
 
 ${error.message}`,
-          edit: sent.key
-        }
-      )
-    }
-  }
-
-  // ═════════════════════════════════════════════
-  // UPDATE
-  // ═════════════════════════════════════════════
-
-  if (command === 'update') {
-
-    const sent = await conn.sendMessage(
-      m.chat,
-      {
-        text: '⏳ Downloading MARY MD update...'
-      },
-      { quoted: m }
-    )
-
-    let tempDir = null
-
-    try {
-
-      const localPkg = await getLocalPackage()
-      const remotePkg = await getRemotePackage()
-
-      const localVersion =
-        localPkg.version || '1.0.0'
-
-      const remoteVersion =
-        remotePkg.version || localVersion
-
-      if (
-        compareVersions(
-          remoteVersion,
-          localVersion
-        ) <= 0
-      ) {
-
-        return await conn.sendMessage(
-          m.chat,
-          {
-            text:
-`✅ *MARY MD is already up to date.*
-
-📦 Version: *${localVersion}*`,
-            edit: sent.key
-          }
-        )
+        edit: sent.key
       }
+    )
+  }
+}
 
-      await conn.sendMessage(
-        m.chat,
-        {
-          text:
-`⏳ *Updating MARY MD...*
+// ─────────────────────────────────────────────
+// UPDATE BOT
+// ─────────────────────────────────────────────
 
-📦 ${localVersion} → ${remoteVersion}
+async function updateBot(m, conn) {
+  const sent = await conn.sendMessage(
+    m.chat,
+    {
+      text:
+`⏳ *Starting MARY MD update...*
 
 🔐 WhatsApp session will be preserved.`
-          ,
-          edit: sent.key
-        }
-      )
+    },
+    {
+      quoted: m
+    }
+  )
 
-      // Temporary directory outside bot files
-      tempDir = await fs.mkdtemp(
-        path.join(
-          os.tmpdir(),
-          'mary-md-update-'
-        )
-      )
+  let tempDir = null
 
-      // Download GitHub repository
-      const source = await downloadRepo(tempDir)
+  try {
+    const localPackage =
+      await getLocalPackage()
 
-      // Update files.
-      // sessions/, data/, tmp/, node_modules and .env
-      // are explicitly protected.
-      await copyUpdatedFiles(
-        source,
-        process.cwd()
-      )
+    const remotePackage =
+      await getRemotePackage()
 
-      // Install new dependencies if package.json changed
-      await conn.sendMessage(
-        m.chat,
-        {
-          text:
-`📦 Files updated.
+    const localVersion =
+      localPackage.version || '1.0.0'
 
-⏳ Installing dependencies...`,
-          edit: sent.key
-        }
-      )
+    const remoteVersion =
+      remotePackage.version || localVersion
 
-      const npmOk = await installDependencies()
-
-      if (!npmOk) {
-        console.log(
-          '[MARY MD] npm install failed. Continuing restart.'
-        )
-      }
-
-      await conn.sendMessage(
-        m.chat,
-        {
-          text:
-`╭━━━〔 ✅ UPDATE COMPLETE 〕━━━
-┃
-┃ 📦 Version:
-┃ ${localVersion} → ${remoteVersion}
-┃
-┃ 🔐 Session: PRESERVED
-┃
-┃ 📁 sessions/: untouched
-┃ 📁 data/: untouched
-┃ 📁 tmp/: untouched
-┃
-┃ 🔄 Restarting...
-╰━━━━━━━━━━━━━━━━━━━━`
-        }
-      )
-
-      // Restart process
-      await restartBot()
-
-    } catch (error) {
-
-      console.error(
-        '[UPDATE ERROR]',
-        error.stack || error.message
-      )
-
+    // Already latest
+    if (
+      compareVersions(
+        remoteVersion,
+        localVersion
+      ) <= 0
+    ) {
       return await conn.sendMessage(
         m.chat,
         {
           text:
-`❌ *Update failed.*
+`✅ *MARY MD is already up to date.*
 
-${error.message}
-
-🔐 Your WhatsApp session was not intentionally modified.`,
+📦 Version: *${localVersion}*`,
           edit: sent.key
         }
       )
-
-    } finally {
-
-      if (tempDir) {
-        await fs.rm(
-          tempDir,
-          {
-            recursive: true,
-            force: true
-          }
-        ).catch(() => {})
-      }
     }
-
-    return
-  }
-
-  // ═════════════════════════════════════════════
-  // RESTART
-  // ═════════════════════════════════════════════
-
-  if (command === 'restart') {
 
     await conn.sendMessage(
       m.chat,
       {
         text:
+`⏳ *Downloading update...*
+
+📦 ${localVersion} → ${remoteVersion}
+
+🔐 Session protection: *ACTIVE*`,
+        edit: sent.key
+      }
+    )
+
+    // Temporary directory
+    tempDir = await fs.mkdtemp(
+      path.join(
+        os.tmpdir(),
+        'mary-md-update-'
+      )
+    )
+
+    // Download GitHub repository
+    const source =
+      await downloadRepository(
+        tempDir
+      )
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        text:
+`📥 *Download complete.*
+
+📦 Installing MARY MD ${remoteVersion}...`,
+        edit: sent.key
+      }
+    )
+
+    // Update repository files
+    //
+    // sessions/
+    // data/
+    // tmp/
+    // node_modules/
+    // .env
+    //
+    // are NOT touched.
+    await copyUpdatedFiles(
+      source,
+      process.cwd()
+    )
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        text:
+`📦 *Files installed.*
+
+⏳ Installing dependencies...`,
+        edit: sent.key
+      }
+    )
+
+    await installDependencies()
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        text:
+`╭━━━〔 ✅ UPDATE COMPLETE 〕━━━
+┃
+┃ 📦 Version:
+┃ *${localVersion}* → *${remoteVersion}*
+┃
+┃ 🔐 WhatsApp Session:
+┃ *PRESERVED*
+┃
+┃ 📁 sessions/
+┃ *NOT TOUCHED*
+┃
+┃ 📁 data/
+┃ *NOT TOUCHED*
+┃
+┃ 📁 tmp/
+┃ *NOT TOUCHED*
+┃
+┃ 🔄 Restarting bot...
+╰━━━━━━━━━━━━━━━━━━━━`
+      }
+    )
+
+    // Give WhatsApp time to send message
+    // then restart process.
+    restartBot()
+
+  } catch (error) {
+    console.error(
+      '[UPDATE ERROR]',
+      error.stack || error.message
+    )
+
+    return await conn.sendMessage(
+      m.chat,
+      {
+        text:
+`❌ *Update failed.*
+
+${error.message}
+
+🔐 Your WhatsApp session was not intentionally modified.`,
+        edit: sent.key
+      }
+    )
+
+  } finally {
+    if (tempDir) {
+      await fs.rm(
+        tempDir,
+        {
+          recursive: true,
+          force: true
+        }
+      ).catch(() => {})
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// RESTART BOT
+// ─────────────────────────────────────────────
+
+async function restartOnly(m, conn) {
+  await conn.sendMessage(
+    m.chat,
+    {
+      text:
 `🔄 *Restarting MARY MD...*
 
 🔐 WhatsApp session will be preserved.`
-      },
-      { quoted: m }
+    },
+    {
+      quoted: m
+    }
+  )
+
+  restartBot()
+}
+
+// ─────────────────────────────────────────────
+// HANDLER
+// ─────────────────────────────────────────────
+
+const handler = async (
+  m,
+  {
+    conn,
+    command
+  }
+) => {
+
+  if (command === 'checkupdate') {
+    return checkUpdate(
+      m,
+      conn
     )
+  }
 
-    await restartBot()
+  if (command === 'update') {
+    return updateBot(
+      m,
+      conn
+    )
+  }
 
-    return
+  if (command === 'restart') {
+    return restartOnly(
+      m,
+      conn
+    )
   }
 }
+
+// ─────────────────────────────────────────────
+// MENU
+// ─────────────────────────────────────────────
 
 handler.help = [
   'checkupdate',
