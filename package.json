@@ -1,6 +1,6 @@
 {
   "name": "mary-md",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "MARY MD - Bilingual WhatsApp Bot (EN/ES)",
   "type": "module",
   "main": "mary.js",
