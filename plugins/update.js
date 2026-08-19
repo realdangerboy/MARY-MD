@@ -10,13 +10,16 @@ const OWNER = 'realdangerboy'
 const REPO = 'MARY-MD'
 const BRANCH = 'main'
 
-const RAW_BASE =
-  `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`
-
 const API_BASE =
   `https://api.github.com/repos/${OWNER}/${REPO}`
 
-// Files that must NEVER be touched.
+const RAW_BASE =
+  `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`
+
+// ─────────────────────────────────────────────────────────────
+// PROTECTED FILES / DIRECTORIES
+// ─────────────────────────────────────────────────────────────
+
 const PROTECTED = new Set([
   '.env',
   '.git',
@@ -28,12 +31,13 @@ const PROTECTED = new Set([
   '.mary-update.lock'
 ])
 
-// Keep local configuration.
+// Local configuration must stay untouched.
 const PRESERVE = new Set([
   'config.js'
 ])
 
-const LOCK_FILE = path.join(ROOT, '.mary-update.lock')
+const LOCK_FILE =
+  path.join(ROOT, '.mary-update.lock')
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -59,15 +63,38 @@ function canUpdate(file) {
   const clean = cleanPath(file)
 
   if (!clean) return false
-  if (isProtected(clean)) return false
-  if (PRESERVE.has(clean)) return false
 
-  if (clean.startsWith('.github/')) return false
-  if (clean.startsWith('.git/')) return false
-  if (clean.startsWith('sessions/')) return false
-  if (clean.startsWith('data/')) return false
-  if (clean.startsWith('tmp/')) return false
-  if (clean.startsWith('node_modules/')) return false
+  if (isProtected(clean)) {
+    return false
+  }
+
+  if (PRESERVE.has(clean)) {
+    return false
+  }
+
+  if (clean.startsWith('.github/')) {
+    return false
+  }
+
+  if (clean.startsWith('.git/')) {
+    return false
+  }
+
+  if (clean.startsWith('sessions/')) {
+    return false
+  }
+
+  if (clean.startsWith('data/')) {
+    return false
+  }
+
+  if (clean.startsWith('tmp/')) {
+    return false
+  }
+
+  if (clean.startsWith('node_modules/')) {
+    return false
+  }
 
   return true
 }
@@ -103,9 +130,14 @@ function compareVersions(a, b) {
   return 0
 }
 
+// ─────────────────────────────────────────────────────────────
+// HTTP
+// ─────────────────────────────────────────────────────────────
+
 async function getJSON(url) {
   const response = await axios.get(url, {
     timeout: 15000,
+
     headers: {
       Accept: 'application/vnd.github+json',
       'User-Agent': 'MARY-MD-Updater'
@@ -118,10 +150,17 @@ async function getJSON(url) {
 async function getText(url) {
   const response = await axios.get(url, {
     timeout: 15000,
+
     responseType: 'text',
-    transformResponse: [data => data],
+
+    transformResponse: [
+      data => data
+    ],
+
     headers: {
-      'User-Agent': 'MARY-MD-Updater'
+      'User-Agent': 'MARY-MD-Updater',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache'
     }
   })
 
@@ -129,54 +168,75 @@ async function getText(url) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// VERSION
+// LOCAL VERSION
 // ─────────────────────────────────────────────────────────────
 
 async function getLocalVersion() {
   try {
-    const pkg = JSON.parse(
-      await fs.readFile(
-        path.join(ROOT, 'package.json'),
-        'utf8'
-      )
+    const raw = await fs.readFile(
+      path.join(ROOT, 'package.json'),
+      'utf8'
     )
 
+    const pkg = JSON.parse(raw)
+
     return pkg.version || '0.0.0'
+
   } catch {
     return '0.0.0'
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// REMOTE PACKAGE
+// ─────────────────────────────────────────────────────────────
+
 async function getRemotePackage() {
   return getJSON(
-    `${RAW_BASE}/package.json?${Date.now()}`
+    `${RAW_BASE}/package.json?ref=${BRANCH}&_=${Date.now()}`
   )
 }
 
 // ─────────────────────────────────────────────────────────────
-// CHANGELOG
+// CHANGELOG PARSER
 // ─────────────────────────────────────────────────────────────
 
 function latestChangelog(raw) {
   if (!raw) return null
 
-  const lines = String(raw).split(/\r?\n/)
+  const lines =
+    String(raw).split(/\r?\n/)
 
   let start = -1
 
+  // First ## section = latest changelog
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim().startsWith('## ')) {
+    if (
+      lines[i]
+        .trim()
+        .startsWith('## ')
+    ) {
       start = i
       break
     }
   }
 
-  if (start === -1) return null
+  if (start === -1) {
+    return null
+  }
 
   let end = lines.length
 
-  for (let i = start + 1; i < lines.length; i++) {
-    if (lines[i].trim().startsWith('## ')) {
+  for (
+    let i = start + 1;
+    i < lines.length;
+    i++
+  ) {
+    if (
+      lines[i]
+        .trim()
+        .startsWith('## ')
+    ) {
       end = i
       break
     }
@@ -188,15 +248,50 @@ function latestChangelog(raw) {
     .trim()
 }
 
+// ─────────────────────────────────────────────────────────────
+// REMOTE CHANGELOG
+// IMPORTANT:
+// Uses GitHub Contents API instead of local CHANGELOG.
+// This prevents showing the old local changelog.
+// ─────────────────────────────────────────────────────────────
+
 async function getRemoteChangelog() {
   try {
-    const raw = await getText(
-      `${RAW_BASE}/CHANGELOG.md?${Date.now()}`
+    const data = await getJSON(
+      `${API_BASE}/contents/CHANGELOG.md?ref=${encodeURIComponent(BRANCH)}&_=${Date.now()}`
     )
 
+    if (!data?.content) {
+      return null
+    }
+
+    const raw = Buffer
+      .from(
+        data.content,
+        'base64'
+      )
+      .toString('utf8')
+
     return latestChangelog(raw)
-  } catch {
-    return null
+
+  } catch (error) {
+
+    console.error(
+      '[MARY UPDATE] Remote changelog:',
+      error.message
+    )
+
+    // Fallback to raw GitHub file
+    try {
+      const raw = await getText(
+        `${RAW_BASE}/CHANGELOG.md?ref=${encodeURIComponent(BRANCH)}&_=${Date.now()}`
+      )
+
+      return latestChangelog(raw)
+
+    } catch {
+      return null
+    }
   }
 }
 
@@ -206,11 +301,13 @@ async function getRemoteChangelog() {
 
 async function getRemoteTree() {
   const data = await getJSON(
-    `${API_BASE}/git/trees/${BRANCH}?recursive=1&${Date.now()}`
+    `${API_BASE}/git/trees/${encodeURIComponent(BRANCH)}?recursive=1&_=${Date.now()}`
   )
 
   if (!data?.tree) {
-    throw new Error('Could not read GitHub repository.')
+    throw new Error(
+      'Could not read GitHub repository.'
+    )
   }
 
   return data.tree.filter(
@@ -219,33 +316,39 @@ async function getRemoteTree() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SHA
+// LOCAL GIT BLOB SHA
 // ─────────────────────────────────────────────────────────────
 
 async function localBlobSha(file) {
   try {
-    const data = await fs.readFile(file)
+    const data =
+      await fs.readFile(file)
 
     const header =
-      Buffer.from(`blob ${data.length}\0`)
+      Buffer.from(
+        `blob ${data.length}\0`
+      )
 
-    const hash = crypto.createHash('sha1')
+    const hash =
+      crypto.createHash('sha1')
 
     hash.update(header)
     hash.update(data)
 
     return hash.digest('hex')
+
   } catch {
     return null
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// CHECK REMOTE UPDATE
+// CHECK UPDATE
 // ─────────────────────────────────────────────────────────────
 
 async function checkForUpdate() {
-  const localVersion = await getLocalVersion()
+  const localVersion =
+    await getLocalVersion()
 
   const [
     remotePackage,
@@ -261,14 +364,19 @@ async function checkForUpdate() {
   const changedFiles = []
 
   for (const item of remoteTree) {
-    const file = cleanPath(item.path)
 
-    if (!canUpdate(file)) continue
+    const file =
+      cleanPath(item.path)
 
-    const localPath = path.join(
-      ROOT,
-      ...file.split('/')
-    )
+    if (!canUpdate(file)) {
+      continue
+    }
+
+    const localPath =
+      path.join(
+        ROOT,
+        ...file.split('/')
+      )
 
     const localSha =
       await localBlobSha(localPath)
@@ -288,6 +396,7 @@ async function checkForUpdate() {
     localVersion,
     remoteVersion,
     changedFiles,
+
     available:
       versionChanged ||
       changedFiles.length > 0
@@ -295,38 +404,54 @@ async function checkForUpdate() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// DOWNLOAD
+// DOWNLOAD FILE
 // ─────────────────────────────────────────────────────────────
 
 async function downloadFile(file) {
-  const clean = cleanPath(file)
+  const clean =
+    cleanPath(file)
 
   if (!canUpdate(clean)) {
     return false
   }
 
-  const destination = path.join(
-    ROOT,
-    ...clean.split('/')
-  )
+  const destination =
+    path.join(
+      ROOT,
+      ...clean.split('/')
+    )
+
+  const encodedPath =
+    clean
+      .split('/')
+      .map(
+        encodeURIComponent
+      )
+      .join('/')
 
   const url =
-    `${RAW_BASE}/${clean
-      .split('/')
-      .map(encodeURIComponent)
-      .join('/')}?${Date.now()}`
+    `${RAW_BASE}/${encodedPath}?ref=${encodeURIComponent(BRANCH)}&_=${Date.now()}`
 
-  const response = await axios.get(url, {
-    timeout: 60000,
-    responseType: 'arraybuffer',
-    headers: {
-      'User-Agent': 'MARY-MD-Updater'
-    }
-  })
+  const response =
+    await axios.get(url, {
+      timeout: 60000,
+      responseType: 'arraybuffer',
+
+      headers: {
+        'User-Agent':
+          'MARY-MD-Updater',
+        'Cache-Control':
+          'no-cache',
+        'Pragma':
+          'no-cache'
+      }
+    })
 
   await fs.mkdir(
     path.dirname(destination),
-    { recursive: true }
+    {
+      recursive: true
+    }
   )
 
   const temporary =
@@ -351,22 +476,36 @@ async function downloadFile(file) {
 
 async function installDependencies() {
   try {
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
 
-    const execAsync = promisify(exec)
+    const {
+      exec
+    } = await import(
+      'child_process'
+    )
+
+    const {
+      promisify
+    } = await import(
+      'util'
+    )
+
+    const execAsync =
+      promisify(exec)
 
     await execAsync(
       'npm install --omit=dev',
       {
         cwd: ROOT,
         timeout: 180000,
-        maxBuffer: 10 * 1024 * 1024
+        maxBuffer:
+          10 * 1024 * 1024
       }
     )
 
     return true
+
   } catch (error) {
+
     console.error(
       '[MARY UPDATE] npm install:',
       error.message
@@ -381,52 +520,86 @@ async function installDependencies() {
 // ─────────────────────────────────────────────────────────────
 
 function restartProcess() {
-  setTimeout(() => {
-    process.exit(1)
-  }, 1200)
+  setTimeout(
+    () => {
+      process.exit(1)
+    },
+    1500
+  )
 }
 
 // ─────────────────────────────────────────────────────────────
-// MAIN PLUGIN
+// COMMAND DETECTION
 // ─────────────────────────────────────────────────────────────
 
-const handler = async (m, { conn, command }) => {
-  const lang = langOf(conn)
+function getCommand(m) {
+  let body =
+    String(m?.body || '').trim()
 
-  /*
-   * IMPORTANT:
-   * command comes directly from handler.js.
-   *
-   * This means both:
-   *
-   * .checkupdate
-   * . checkupdate
-   *
-   * resolve to the same command.
-   */
+  if (!body) {
+    return ''
+  }
 
-  const currentCommand = String(command || '')
+  // Handles:
+  // .checkupdate
+  // . checkupdate
+  // !checkupdate
+  // ! checkupdate
+  // #update
+  // /restart
+  // $ update
+
+  body =
+    body.replace(
+      /^[.!#$\/]+\s*/,
+      ''
+    )
+
+  return body
     .trim()
+    .split(/\s+/)[0]
     .toLowerCase()
+}
+
+// ─────────────────────────────────────────────────────────────
+// MAIN HANDLER
+// ─────────────────────────────────────────────────────────────
+
+const handler = async (
+  m,
+  { conn }
+) => {
+
+  const lang =
+    langOf(conn)
+
+  const command =
+    getCommand(m)
 
   // ───────────────────────────────────────────────────────────
   // RESTART
   // ───────────────────────────────────────────────────────────
 
-  if (currentCommand === 'restart') {
+  if (command === 'restart') {
+
     await conn.sendMessage(
       m.chat,
       {
         text: t(
           lang,
+
           '🔄 *Restarting MARY MD...*\n\nPlease wait...',
+
           '🔄 *Reiniciando MARY MD...*\n\nEspera...'
         )
       },
-      { quoted: m }
+      {
+        quoted: m
+      }
     )
 
     restartProcess()
+
     return
   }
 
@@ -435,9 +608,10 @@ const handler = async (m, { conn, command }) => {
   // ───────────────────────────────────────────────────────────
 
   if (
-    currentCommand === 'checkupdate' ||
-    currentCommand === 'checkupdates'
+    command === 'checkupdate' ||
+    command === 'checkupdates'
   ) {
+
     await conn.sendMessage(
       m.chat,
       {
@@ -448,30 +622,45 @@ const handler = async (m, { conn, command }) => {
       }
     )
 
-    const status = await conn.sendMessage(
-      m.chat,
-      {
-        text: t(
-          lang,
-          '🔎 *Checking for updates...*',
-          '🔎 *Comprobando actualizaciones...*'
-        )
-      },
-      { quoted: m }
-    )
+    const status =
+      await conn.sendMessage(
+        m.chat,
+        {
+          text: t(
+            lang,
+
+            '🔎 *Checking for updates...*',
+
+            '🔎 *Comprobando actualizaciones...*'
+          )
+        },
+        {
+          quoted: m
+        }
+      )
 
     try {
-      const info = await checkForUpdate()
+
+      const info =
+        await checkForUpdate()
+
+      // ─────────────────────────────────────────────
+      // NO UPDATE
+      // ─────────────────────────────────────────────
 
       if (!info.available) {
+
         await conn.sendMessage(
           m.chat,
           {
             text: t(
               lang,
+
               `✅ *MARY MD is up to date!*\n\n📦 Version: *${info.localVersion}*`,
+
               `✅ *¡MARY MD está actualizado!*\n\n📦 Versión: *${info.localVersion}*`
             ),
+
             edit: status.key
           }
         )
@@ -489,32 +678,45 @@ const handler = async (m, { conn, command }) => {
         return
       }
 
+      // ─────────────────────────────────────────────
+      // FETCH LATEST CHANGELOG FROM GITHUB
+      // ─────────────────────────────────────────────
+
       const changelog =
         await getRemoteChangelog()
 
       let message =
         t(
           lang,
+
           `🆕 *UPDATE AVAILABLE*\n\n📦 Current version: *${info.localVersion}*\n📦 New version: *${info.remoteVersion}*`,
+
           `🆕 *ACTUALIZACIÓN DISPONIBLE*\n\n📦 Versión actual: *${info.localVersion}*\n📦 Nueva versión: *${info.remoteVersion}*`
         )
 
       if (changelog) {
+
         message +=
           `\n\n📝 *CHANGELOG*\n\n${changelog}`
+
       } else {
+
         message +=
           t(
             lang,
-            '\n\n📝 No changelog available.',
-            '\n\n📝 No hay changelog disponible.'
+
+            `\n\n📁 *${info.changedFiles.length} file(s) changed.*`,
+
+            `\n\n📁 *${info.changedFiles.length} archivo(s) cambiaron.*`
           )
       }
 
       message +=
         t(
           lang,
+
           '\n\nUse *.update* to install the update.',
+
           '\n\nUsa *.update* para instalar la actualización.'
         )
 
@@ -537,6 +739,7 @@ const handler = async (m, { conn, command }) => {
       )
 
     } catch (error) {
+
       console.error(
         '[CHECKUPDATE]',
         error
@@ -547,9 +750,12 @@ const handler = async (m, { conn, command }) => {
         {
           text: t(
             lang,
+
             `❌ *Update check failed*\n\n${error.message}`,
+
             `❌ *Error al comprobar actualización*\n\n${error.message}`
           ),
+
           edit: status.key
         }
       )
@@ -572,18 +778,28 @@ const handler = async (m, { conn, command }) => {
   // UPDATE
   // ───────────────────────────────────────────────────────────
 
-  if (currentCommand === 'update') {
-    if (fsSync.existsSync(LOCK_FILE)) {
+  if (command === 'update') {
+
+    if (
+      fsSync.existsSync(
+        LOCK_FILE
+      )
+    ) {
+
       return conn.sendMessage(
         m.chat,
         {
           text: t(
             lang,
+
             '⚠️ An update is already running.',
+
             '⚠️ Ya hay una actualización en proceso.'
           )
         },
-        { quoted: m }
+        {
+          quoted: m
+        }
       )
     }
 
@@ -593,6 +809,7 @@ const handler = async (m, { conn, command }) => {
     )
 
     try {
+
       await conn.sendMessage(
         m.chat,
         {
@@ -603,45 +820,75 @@ const handler = async (m, { conn, command }) => {
         }
       )
 
-      const status = await conn.sendMessage(
-        m.chat,
-        {
-          text: t(
-            lang,
-            '⏳ *Checking latest version...*',
-            '⏳ *Comprobando la última versión...*'
-          )
-        },
-        { quoted: m }
-      )
-
-      const info =
-        await checkForUpdate()
-
-      if (!info.available) {
+      const status =
         await conn.sendMessage(
           m.chat,
           {
             text: t(
               lang,
+
+              '⏳ *Checking latest version...*',
+
+              '⏳ *Comprobando la última versión...*'
+            )
+          },
+          {
+            quoted: m
+          }
+        )
+
+      const info =
+        await checkForUpdate()
+
+      // ─────────────────────────────────────────────
+      // ALREADY UPDATED
+      // ─────────────────────────────────────────────
+
+      if (!info.available) {
+
+        await conn.sendMessage(
+          m.chat,
+          {
+            text: t(
+              lang,
+
               `✅ *Already up to date!*\n\n📦 Version: *${info.localVersion}*`,
+
               `✅ *¡Ya está actualizado!*\n\n📦 Versión: *${info.localVersion}*`
             ),
+
             edit: status.key
+          }
+        )
+
+        await conn.sendMessage(
+          m.chat,
+          {
+            react: {
+              text: '✅',
+              key: m.key
+            }
           }
         )
 
         return
       }
 
+      // ─────────────────────────────────────────────
+      // UPDATE START
+      // ─────────────────────────────────────────────
+
       await conn.sendMessage(
         m.chat,
         {
           text: t(
             lang,
+
             `⬇️ *Updating MARY MD...*\n\n📦 ${info.localVersion} → ${info.remoteVersion}\n📁 Updating ${info.changedFiles.length} file(s)...`,
+
             `⬇️ *Actualizando MARY MD...*\n\n📦 ${info.localVersion} → ${info.remoteVersion}\n📁 Actualizando ${info.changedFiles.length} archivo(s)...`
           ),
+
           edit: status.key
         }
       )
@@ -652,16 +899,31 @@ const handler = async (m, { conn, command }) => {
       let downloaded = 0
       let failed = 0
 
-      for (const item of tree) {
-        const file = cleanPath(item.path)
+      // ─────────────────────────────────────────────
+      // DOWNLOAD ALL REMOTE FILES
+      // ─────────────────────────────────────────────
 
-        if (!canUpdate(file)) continue
+      for (
+        const item of tree
+      ) {
+
+        const file =
+          cleanPath(item.path)
+
+        if (!canUpdate(file)) {
+          continue
+        }
 
         try {
-          if (await downloadFile(file)) {
+
+          if (
+            await downloadFile(file)
+          ) {
             downloaded++
           }
+
         } catch (error) {
+
           failed++
 
           console.error(
@@ -672,12 +934,16 @@ const handler = async (m, { conn, command }) => {
       }
 
       if (failed > 0) {
+
         throw new Error(
           `${failed} file(s) failed to download.`
         )
       }
 
-      // package.json changed?
+      // ─────────────────────────────────────────────
+      // NPM INSTALL IF PACKAGE CHANGED
+      // ─────────────────────────────────────────────
+
       const packageChanged =
         info.changedFiles.includes(
           'package.json'
@@ -686,14 +952,18 @@ const handler = async (m, { conn, command }) => {
       let dependencyText = ''
 
       if (packageChanged) {
+
         await conn.sendMessage(
           m.chat,
           {
             text: t(
               lang,
+
               '📦 *Installing dependencies...*',
+
               '📦 *Instalando dependencias...*'
             ),
+
             edit: status.key
           }
         )
@@ -702,19 +972,32 @@ const handler = async (m, { conn, command }) => {
           await installDependencies()
 
         if (npmOK) {
-          dependencyText = t(
-            lang,
-            '\n📦 Dependencies installed.',
-            '\n📦 Dependencias instaladas.'
-          )
+
+          dependencyText =
+            t(
+              lang,
+
+              '\n📦 Dependencies installed.',
+
+              '\n📦 Dependencias instaladas.'
+            )
+
         } else {
-          dependencyText = t(
-            lang,
-            '\n⚠️ npm install failed. Run `npm install` manually.',
-            '\n⚠️ npm install falló. Ejecuta `npm install` manualmente.'
-          )
+
+          dependencyText =
+            t(
+              lang,
+
+              '\n⚠️ npm install failed. Run `npm install` manually.',
+
+              '\n⚠️ npm install falló. Ejecuta `npm install` manualmente.'
+            )
         }
       }
+
+      // ─────────────────────────────────────────────
+      // FETCH NEW CHANGELOG
+      // ─────────────────────────────────────────────
 
       const changelog =
         await getRemoteChangelog()
@@ -722,20 +1005,26 @@ const handler = async (m, { conn, command }) => {
       let finalMessage =
         t(
           lang,
+
           `✅ *MARY MD UPDATED SUCCESSFULLY!*\n\n📦 Version: *${info.remoteVersion}*\n📁 Files updated: *${downloaded}*${dependencyText}`,
+
           `✅ *¡MARY MD SE ACTUALIZÓ CORRECTAMENTE!*\n\n📦 Versión: *${info.remoteVersion}*\n📁 Archivos actualizados: *${downloaded}*${dependencyText}`
         )
 
       if (changelog) {
+
         finalMessage +=
           `\n\n📝 *CHANGELOG*\n\n${changelog}`
       }
 
-      finalMessage += t(
-        lang,
-        '\n\n🔄 *Restarting...*',
-        '\n\n🔄 *Reiniciando...*'
-      )
+      finalMessage +=
+        t(
+          lang,
+
+          '\n\n🔄 *Restarting...*',
+
+          '\n\n🔄 *Reiniciando...*'
+        )
 
       await conn.sendMessage(
         m.chat,
@@ -755,14 +1044,13 @@ const handler = async (m, { conn, command }) => {
         }
       )
 
-      /*
-       * sessions/ is protected above.
-       * Therefore WhatsApp credentials are not downloaded,
-       * deleted or replaced by the updater.
-       */
+      // IMPORTANT:
+      // Session is NOT deleted.
+      // sessions/main is never touched.
       restartProcess()
 
     } catch (error) {
+
       console.error(
         '[MARY UPDATE]',
         error
@@ -773,11 +1061,15 @@ const handler = async (m, { conn, command }) => {
         {
           text: t(
             lang,
+
             `❌ *UPDATE FAILED*\n\n${error.message}\n\n🔐 Your WhatsApp session was not touched.`,
+
             `❌ *ACTUALIZACIÓN FALLIDA*\n\n${error.message}\n\n🔐 Tu sesión de WhatsApp no fue modificada.`
           )
         },
-        { quoted: m }
+        {
+          quoted: m
+        }
       )
 
       await conn.sendMessage(
@@ -791,9 +1083,13 @@ const handler = async (m, { conn, command }) => {
       )
 
     } finally {
+
       try {
-        await fs.unlink(LOCK_FILE)
+        await fs.unlink(
+          LOCK_FILE
+        )
       } catch {}
+
     }
 
     return
@@ -810,10 +1106,13 @@ handler.help = [
   'restart'
 ]
 
-handler.tags = ['system']
+handler.tags = [
+  'system'
+]
 
 handler.command = [
   'checkupdate',
+  'checkupdates',
   'update',
   'restart'
 ]
