@@ -4,14 +4,9 @@
 
 ### Added
 - New update system
-- Checkupdate command
+- antilink added ✅ 
 - Restart command
 
 ### Fixed
 - antidelete removed
-- Improved updater
-
-## 1.1.0
-
-### Added
-- New plugins
+- Improved updater 😂 
