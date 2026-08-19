@@ -390,24 +390,30 @@ function restartProcess() {
 // MAIN PLUGIN
 // ─────────────────────────────────────────────────────────────
 
-const handler = async (m, { conn }) => {
+const handler = async (m, { conn, command }) => {
   const lang = langOf(conn)
 
-  // IMPORTANT:
-  // Your handler.js passes the command here.
-  // ctx.command is the normalized command.
-  const command =
-    String(m.body || '')
-      .trim()
-      .split(/\s+/)[0]
-      .replace(/^[.!#/$]+/, '')
-      .toLowerCase()
+  /*
+   * IMPORTANT:
+   * command comes directly from handler.js.
+   *
+   * This means both:
+   *
+   * .checkupdate
+   * . checkupdate
+   *
+   * resolve to the same command.
+   */
+
+  const currentCommand = String(command || '')
+    .trim()
+    .toLowerCase()
 
   // ───────────────────────────────────────────────────────────
   // RESTART
   // ───────────────────────────────────────────────────────────
 
-  if (command === 'restart') {
+  if (currentCommand === 'restart') {
     await conn.sendMessage(
       m.chat,
       {
@@ -429,8 +435,8 @@ const handler = async (m, { conn }) => {
   // ───────────────────────────────────────────────────────────
 
   if (
-    command === 'checkupdate' ||
-    command === 'checkupdates'
+    currentCommand === 'checkupdate' ||
+    currentCommand === 'checkupdates'
   ) {
     await conn.sendMessage(
       m.chat,
@@ -496,6 +502,13 @@ const handler = async (m, { conn }) => {
       if (changelog) {
         message +=
           `\n\n📝 *CHANGELOG*\n\n${changelog}`
+      } else {
+        message +=
+          t(
+            lang,
+            '\n\n📝 No changelog available.',
+            '\n\n📝 No hay changelog disponible.'
+          )
       }
 
       message +=
@@ -559,7 +572,7 @@ const handler = async (m, { conn }) => {
   // UPDATE
   // ───────────────────────────────────────────────────────────
 
-  if (command === 'update') {
+  if (currentCommand === 'update') {
     if (fsSync.existsSync(LOCK_FILE)) {
       return conn.sendMessage(
         m.chat,
@@ -742,7 +755,11 @@ const handler = async (m, { conn }) => {
         }
       )
 
-      // Session directory is NEVER touched.
+      /*
+       * sessions/ is protected above.
+       * Therefore WhatsApp credentials are not downloaded,
+       * deleted or replaced by the updater.
+       */
       restartProcess()
 
     } catch (error) {
@@ -784,7 +801,7 @@ const handler = async (m, { conn }) => {
 }
 
 // ─────────────────────────────────────────────────────────────
-// THREE COMMANDS IN THE MENU
+// MENU
 // ─────────────────────────────────────────────────────────────
 
 handler.help = [
@@ -797,7 +814,6 @@ handler.tags = ['system']
 
 handler.command = [
   'checkupdate',
-  'checkupdates',
   'update',
   'restart'
 ]
