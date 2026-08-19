@@ -1,0 +1,13 @@
+sessions/
+data/
+tmp/
+.env
+node_modules/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tar.gz
+*.zip
