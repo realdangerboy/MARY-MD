@@ -1,6 +1,6 @@
 # MARY MD Changelog
 
-## 1.0.4
+## 1.0.5
 
 ### Added
 - Added direct GitHub updater
