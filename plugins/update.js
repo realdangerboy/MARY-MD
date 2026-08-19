@@ -1,764 +1,854 @@
-// plugins/update.js
-
 import fs from 'fs/promises'
+import fsSync from 'fs'
 import path from 'path'
-import os from 'os'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
+import crypto from 'crypto'
 import axios from 'axios'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 
-const execFileAsync = promisify(execFile)
+const execAsync = promisify(exec)
 
-// ─────────────────────────────────────────────
-// GITHUB CONFIG
-// ─────────────────────────────────────────────
+const ROOT = process.cwd()
 
 const OWNER = 'realdangerboy'
 const REPO = 'MARY-MD'
 const BRANCH = 'main'
 
-const RAW_BASE =
-  `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`
+const API_BASE = `https://api.github.com/repos/${OWNER}/${REPO}`
+const RAW_BASE = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`
 
-const ZIP_URL =
-  `https://codeload.github.com/${OWNER}/${REPO}/tar.gz/refs/heads/${BRANCH}`
+const UPDATE_LOCK = path.join(ROOT, '.mary-update.lock')
 
-const REMOTE_URL =
-  `https://github.com/${OWNER}/${REPO}.git`
-
-// ─────────────────────────────────────────────
-// PROTECTED FILES / DIRECTORIES
-// ─────────────────────────────────────────────
-//
-// These are NEVER replaced by the updater.
-//
-// sessions = WhatsApp login/session
-// data     = bot database/settings
-// tmp      = temporary files
-// .env     = environment variables
-// node_modules = installed modules
-// .git     = git metadata (handled separately, see ensureGitRepo)
-// ─────────────────────────────────────────────
-
-const PROTECTED = [
+// Files/directories that MUST NEVER be overwritten by the updater.
+const PROTECTED = new Set([
+  '.env',
+  '.git',
   'sessions',
   'data',
   'tmp',
   'node_modules',
-  '.env',
-  '.git'
-]
+  'backups',
+  '.mary-update.lock'
+])
 
-function isProtected(name) {
-  const clean = name
-    .replace(/\\/g, '/')
-    .replace(/^\/+/, '')
-    .replace(/\/+$/, '')
+// Local configuration should remain yours.
+// Remove 'config.js' from this list if you want GitHub updates
+// to overwrite your local config automatically.
+const PRESERVE_FILES = new Set([
+  'config.js'
+])
 
-  return PROTECTED.some(item =>
-    clean === item ||
-    clean.startsWith(`${item}/`)
-  )
+// ------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------
+
+function normalizePath(p) {
+  return p.replace(/\\/g, '/').replace(/^\/+/, '')
 }
 
-// ─────────────────────────────────────────────
-// LOCAL PACKAGE
-// ─────────────────────────────────────────────
+function isProtected(file) {
+  const clean = normalizePath(file)
+  const first = clean.split('/')[0]
 
-async function getLocalPackage() {
+  if (PROTECTED.has(first)) return true
+  if (PROTECTED.has(clean)) return true
+
+  return false
+}
+
+function shouldUpdate(file) {
+  const clean = normalizePath(file)
+
+  if (!clean) return false
+  if (isProtected(clean)) return false
+  if (PRESERVE_FILES.has(clean)) return false
+
+  // Don't download GitHub metadata or unnecessary files.
+  if (clean.startsWith('.github/')) return false
+  if (clean.startsWith('.git/')) return false
+
+  // Don't overwrite runtime/session/config data.
+  if (
+    clean.startsWith('sessions/') ||
+    clean.startsWith('data/') ||
+    clean.startsWith('tmp/') ||
+    clean.startsWith('node_modules/')
+  ) return false
+
+  return true
+}
+
+function languageOf(conn) {
+  return String(conn?.language || 'en').toLowerCase().startsWith('es')
+    ? 'es'
+    : 'en'
+}
+
+function text(lang, en, es) {
+  return lang === 'es' ? es : en
+}
+
+function versionParts(version) {
+  return String(version || '0.0.0')
+    .replace(/^v/i, '')
+    .split('.')
+    .map(x => parseInt(x, 10) || 0)
+}
+
+function compareVersions(a, b) {
+  const A = versionParts(a)
+  const B = versionParts(b)
+
+  for (let i = 0; i < 3; i++) {
+    if (A[i] > B[i]) return 1
+    if (A[i] < B[i]) return -1
+  }
+
+  return 0
+}
+
+async function readJson(file) {
   try {
-    return JSON.parse(
-      await fs.readFile('./package.json', 'utf8')
-    )
+    return JSON.parse(await fs.readFile(file, 'utf8'))
   } catch {
-    return {
-      version: '1.0.0'
-    }
+    return null
   }
 }
 
-// ─────────────────────────────────────────────
-// REMOTE PACKAGE
-// ─────────────────────────────────────────────
+async function getLocalVersion() {
+  const pkg = await readJson(path.join(ROOT, 'package.json'))
+  return pkg?.version || '0.0.0'
+}
 
-async function getRemotePackage() {
-  // Cache-buster: raw.githubusercontent.com caches files for a
-  // few minutes. Without this, a just-pushed version bump can
-  // still return the old package.json for a while.
-  const url = `${RAW_BASE}/package.json?_=${Date.now()}`
-
+async function fetchJson(url) {
   const response = await axios.get(url, {
     timeout: 15000,
     headers: {
-      'User-Agent': 'MARY-MD-Updater',
-      'Cache-Control': 'no-cache'
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'MARY-MD-Updater'
     }
   })
 
   return response.data
 }
 
-// ─────────────────────────────────────────────
-// GET CHANGELOG.MD
-// ─────────────────────────────────────────────
-
-async function getRemoteChangelog() {
-  const url = `${RAW_BASE}/CHANGELOG.md?_=${Date.now()}`
-
-  try {
-    const response = await axios.get(url, {
-      timeout: 15000,
-      responseType: 'text',
-      headers: {
-        'User-Agent': 'MARY-MD-Updater',
-        'Cache-Control': 'no-cache'
-      }
-    })
-
-    return response.data
-  } catch {
-    return null
-  }
-}
-
-// ─────────────────────────────────────────────
-// VERSION COMPARISON
-// ─────────────────────────────────────────────
-
-function compareVersions(a, b) {
-  const A = String(a)
-    .replace(/^v/i, '')
-    .split('.')
-    .map(Number)
-
-  const B = String(b)
-    .replace(/^v/i, '')
-    .split('.')
-    .map(Number)
-
-  for (let i = 0; i < 3; i++) {
-    const x = A[i] || 0
-    const y = B[i] || 0
-
-    if (x > y) return 1
-    if (x < y) return -1
-  }
-
-  return 0
-}
-
-// ─────────────────────────────────────────────
-// EXTRACT VERSION SECTION FROM CHANGELOG
-// ─────────────────────────────────────────────
-
-function getVersionChangelog(markdown, version) {
-  if (!markdown) return null
-
-  const cleanVersion = String(version)
-    .replace(/^v/i, '')
-    .trim()
-
-  const lines = markdown.split(/\r?\n/)
-
-  // Flexible match — accepts:
-  //   ## 1.0.6
-  //   ## v1.0.6
-  //   ## [1.0.6]
-  //   ## Version 1.0.6
-  //   ## 1.0.6 - 2026-08-18
-  //   ## [1.0.6] - 2026-08-18
-  //   ##1.0.6
-  const escaped = cleanVersion.replace(/\./g, '\\.')
-
-  const startRegex = new RegExp(
-    `^##+\\s*(version)?\\s*\\[?v?${escaped}\\]?(\\s|$|[-–—:])`,
-    'i'
-  )
-
-  let start = -1
-
-  for (let i = 0; i < lines.length; i++) {
-    if (startRegex.test(lines[i].trim())) {
-      start = i
-      break
-    }
-  }
-
-  // Version section not found
-  if (start === -1) {
-    return null
-  }
-
-  const result = []
-
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^##\s+/i.test(lines[i].trim())) {
-      break
-    }
-
-    result.push(lines[i])
-  }
-
-  return result
-    .join('\n')
-    .trim()
-}
-
-// ─────────────────────────────────────────────
-// CLEAN MARKDOWN FOR WHATSAPP
-// ─────────────────────────────────────────────
-
-function formatChangelog(text) {
-  if (!text) {
-    return 'No changelog available for this version.'
-  }
-
-  return text
-    .replace(/^###\s+(.+)$/gm, '*$1*')
-    .replace(/^####\s+(.+)$/gm, '*$1*')
-    .replace(/^\s*[-*]\s+/gm, '• ')
-    .replace(/^\s*>\s?/gm, '')
-    .trim()
-}
-
-// ─────────────────────────────────────────────
-// DOWNLOAD COMPLETE REPOSITORY
-// ─────────────────────────────────────────────
-
-async function downloadRepository(tempDir) {
-  const archive = path.join(
-    tempDir,
-    'mary-md-update.tar.gz'
-  )
-
-  const response = await axios.get(ZIP_URL, {
-    responseType: 'arraybuffer',
-    timeout: 180000,
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
+async function fetchText(url) {
+  const response = await axios.get(url, {
+    timeout: 20000,
+    responseType: 'text',
+    transformResponse: [data => data],
     headers: {
       'User-Agent': 'MARY-MD-Updater'
     }
   })
 
-  await fs.writeFile(
-    archive,
-    response.data
-  )
+  return response.data
+}
 
-  const extractDir = path.join(
-    tempDir,
-    'extract'
-  )
+// ------------------------------------------------------------
+// GitHub repository information
+// ------------------------------------------------------------
 
-  await fs.mkdir(
-    extractDir,
-    {
-      recursive: true
-    }
-  )
-
-  await execFileAsync(
-    'tar',
-    [
-      '-xzf',
-      archive,
-      '-C',
-      extractDir
-    ],
-    {
-      timeout: 180000
-    }
-  )
-
-  const folders = await fs.readdir(
-    extractDir
-  )
-
-  if (!folders.length) {
-    throw new Error(
-      'GitHub update archive is empty.'
-    )
-  }
-
-  return path.join(
-    extractDir,
-    folders[0]
+async function getRemotePackage() {
+  return await fetchJson(
+    `${RAW_BASE}/package.json?cache=${Date.now()}`
   )
 }
 
-// ─────────────────────────────────────────────
-// COPY UPDATED FILES
-// ─────────────────────────────────────────────
-
-async function copyUpdatedFiles(
-  source,
-  destination
-) {
-  const entries = await fs.readdir(
-    source,
-    {
-      withFileTypes: true
-    }
+async function getRemoteTree() {
+  const data = await fetchJson(
+    `${API_BASE}/git/trees/${BRANCH}?recursive=1&cache=${Date.now()}`
   )
+
+  if (!data?.tree) {
+    throw new Error('GitHub repository tree could not be read.')
+  }
+
+  return data.tree.filter(item => item.type === 'blob')
+}
+
+// ------------------------------------------------------------
+// CHANGELOG
+// ------------------------------------------------------------
+
+function extractLatestChangelog(raw) {
+  if (!raw) return null
+
+  const lines = String(raw).split(/\r?\n/)
+
+  let start = -1
+
+  // First "## " section is the newest section.
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().startsWith('## ')) {
+      start = i
+      break
+    }
+  }
+
+  if (start === -1) return null
+
+  let end = lines.length
+
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i].trim().startsWith('## ')) {
+      end = i
+      break
+    }
+  }
+
+  return lines.slice(start, end).join('\n').trim()
+}
+
+async function getRemoteChangelog() {
+  try {
+    const raw = await fetchText(
+      `${RAW_BASE}/CHANGELOG.md?cache=${Date.now()}`
+    )
+
+    return extractLatestChangelog(raw)
+  } catch {
+    return null
+  }
+}
+
+// ------------------------------------------------------------
+// Local SHA calculation
+//
+// GitHub tree gives Git blob SHA values.
+// This calculates the same SHA locally without requiring Git.
+// ------------------------------------------------------------
+
+async function gitBlobSha(file) {
+  try {
+    const data = await fs.readFile(file)
+
+    const header = Buffer.from(`blob ${data.length}\0`)
+    const hash = crypto.createHash('sha1')
+
+    hash.update(header)
+    hash.update(data)
+
+    return hash.digest('hex')
+  } catch {
+    return null
+  }
+}
+
+async function getUpdateInfo() {
+  const [localVersion, remotePackage, tree] = await Promise.all([
+    getLocalVersion(),
+    getRemotePackage(),
+    getRemoteTree()
+  ])
+
+  const remoteVersion = remotePackage?.version || '0.0.0'
+
+  const changedFiles = []
+
+  for (const item of tree) {
+    const file = normalizePath(item.path)
+
+    if (!shouldUpdate(file)) continue
+
+    const localPath = path.join(ROOT, ...file.split('/'))
+    const localSha = await gitBlobSha(localPath)
+
+    if (localSha !== item.sha) {
+      changedFiles.push({
+        path: file,
+        sha: item.sha
+      })
+    }
+  }
+
+  const versionChanged =
+    compareVersions(remoteVersion, localVersion) !== 0
+
+  return {
+    localVersion,
+    remoteVersion,
+    versionChanged,
+    changedFiles,
+    available: versionChanged || changedFiles.length > 0
+  }
+}
+
+// ------------------------------------------------------------
+// Safe directory creation
+// ------------------------------------------------------------
+
+async function ensureParent(file) {
+  await fs.mkdir(path.dirname(file), {
+    recursive: true
+  })
+}
+
+// ------------------------------------------------------------
+// Download a single file
+// ------------------------------------------------------------
+
+async function downloadFile(relativePath) {
+  const clean = normalizePath(relativePath)
+
+  if (!shouldUpdate(clean)) {
+    return false
+  }
+
+  const destination = path.join(
+    ROOT,
+    ...clean.split('/')
+  )
+
+  const url =
+    `${RAW_BASE}/${clean.split('/').map(encodeURIComponent).join('/')}` +
+    `?cache=${Date.now()}`
+
+  const response = await axios.get(url, {
+    timeout: 60000,
+    responseType: 'arraybuffer',
+    headers: {
+      'User-Agent': 'MARY-MD-Updater'
+    }
+  })
+
+  await ensureParent(destination)
+
+  // Write atomically.
+  const tempFile = `${destination}.marytmp`
+
+  await fs.writeFile(tempFile, response.data)
+  await fs.rename(tempFile, destination)
+
+  return true
+}
+
+// ------------------------------------------------------------
+// Remove files that exist locally but no longer exist remotely.
+//
+// IMPORTANT:
+// Only removes files inside source directories that the updater
+// controls. Sessions/data/config/etc. are never touched.
+// ------------------------------------------------------------
+
+async function getLocalSourceFiles(dir, relative = '') {
+  const result = []
+
+  if (!fsSync.existsSync(dir)) return result
+
+  const entries = await fs.readdir(dir, {
+    withFileTypes: true
+  })
 
   for (const entry of entries) {
-    const name = entry.name
+    const rel = relative
+      ? `${relative}/${entry.name}`
+      : entry.name
 
-    // NEVER TOUCH PROTECTED FILES
-    if (isProtected(name)) {
-      continue
-    }
-
-    const src = path.join(
-      source,
-      name
-    )
-
-    const dest = path.join(
-      destination,
-      name
-    )
+    const full = path.join(dir, entry.name)
 
     if (entry.isDirectory()) {
-      await fs.mkdir(
-        dest,
-        {
-          recursive: true
-        }
-      )
+      if (
+        entry.name === 'node_modules' ||
+        entry.name === '.git' ||
+        entry.name === 'sessions' ||
+        entry.name === 'data' ||
+        entry.name === 'tmp'
+      ) {
+        continue
+      }
 
-      await copyUpdatedFiles(
-        src,
-        dest
+      result.push(
+        ...(await getLocalSourceFiles(full, rel))
       )
     } else {
-      await fs.mkdir(
-        path.dirname(dest),
-        {
-          recursive: true
-        }
-      )
+      result.push(normalizePath(rel))
+    }
+  }
 
-      await fs.copyFile(
-        src,
-        dest
-      )
+  return result
+}
+
+async function removeDeletedFiles(remotePaths) {
+  const remoteSet = new Set(remotePaths)
+
+  // Only clean plugins and lib.
+  for (const rootDir of ['plugins', 'lib']) {
+    const dir = path.join(ROOT, rootDir)
+
+    if (!fsSync.existsSync(dir)) continue
+
+    const localFiles = await getLocalSourceFiles(
+      dir,
+      rootDir
+    )
+
+    for (const file of localFiles) {
+      if (!remoteSet.has(file)) {
+        const full = path.join(
+          ROOT,
+          ...file.split('/')
+        )
+
+        try {
+          await fs.unlink(full)
+        } catch {}
+      }
     }
   }
 }
 
-// ─────────────────────────────────────────────
-// ENSURE PROTECTED / RUNTIME FOLDERS EXIST
-// ─────────────────────────────────────────────
-//
-// GitHub's tar.gz archive never contains: .git, sessions,
-// data, tmp, node_modules. So a fresh deploy that only
-// extracts the archive never gets these folders — they
-// have to be created explicitly.
-// ─────────────────────────────────────────────
-
-const RUNTIME_DIRS = [
-  'sessions',
-  'data',
-  'tmp'
-]
-
-async function ensureRuntimeDirs() {
-  for (const dir of RUNTIME_DIRS) {
-    await fs.mkdir(dir, { recursive: true }).catch(() => {})
-  }
-}
-
-// ─────────────────────────────────────────────
-// ENSURE .GIT REPO EXISTS
-// ─────────────────────────────────────────────
-//
-// The updater installs from a tar.gz archive (like GitHub's
-// "Download ZIP" button), which never includes a .git folder.
-// That means a bot deployed purely by this updater has no git
-// history at all — `git status`, `git pull`, `git log` etc.
-// won't work.
-//
-// This creates a real .git folder pointing at the same repo,
-// without touching any tracked files (git init doesn't modify
-// the working directory), so it's safe to run on every update.
-// ─────────────────────────────────────────────
-
-async function isGitAvailable() {
-  try {
-    await execFileAsync('git', ['--version'], { timeout: 10000 })
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function hasGitRepo() {
-  try {
-    await fs.access('.git')
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function ensureGitRepo() {
-  if (!(await isGitAvailable())) {
-    // git binary not installed on this host — skip silently,
-    // the bot still works fine without it.
-    return false
-  }
-
-  if (await hasGitRepo()) {
-    return true
-  }
-
-  try {
-    await execFileAsync(
-      'git',
-      ['init'],
-      { cwd: process.cwd(), timeout: 30000 }
-    )
-
-    await execFileAsync(
-      'git',
-      ['remote', 'add', 'origin', REMOTE_URL],
-      { cwd: process.cwd(), timeout: 30000 }
-    ).catch(() => {})
-
-    await execFileAsync(
-      'git',
-      ['branch', '-M', BRANCH],
-      { cwd: process.cwd(), timeout: 30000 }
-    ).catch(() => {})
-
-    return true
-  } catch (error) {
-    console.error(
-      '[MARY MD] git init failed:',
-      error.stderr || error.message
-    )
-    return false
-  }
-}
-
-// ─────────────────────────────────────────────
-// NPM INSTALL
-// ─────────────────────────────────────────────
+// ------------------------------------------------------------
+// npm dependency update
+// ------------------------------------------------------------
 
 async function installDependencies() {
   try {
-    await execFileAsync(
-      'npm',
-      [
-        'install',
-        '--omit=dev',
-        '--no-audit',
-        '--no-fund'
-      ],
-      {
-        cwd: process.cwd(),
-        timeout: 300000
-      }
+    const packageManagerFiles = [
+      'package-lock.json',
+      'npm-shrinkwrap.json'
+    ]
+
+    const hasLock = packageManagerFiles.some(file =>
+      fsSync.existsSync(path.join(ROOT, file))
     )
+
+    const command = hasLock
+      ? 'npm install --omit=dev'
+      : 'npm install --omit=dev'
+
+    await execAsync(command, {
+      cwd: ROOT,
+      timeout: 180000,
+      maxBuffer: 1024 * 1024 * 10
+    })
 
     return true
   } catch (error) {
     console.error(
-      '[MARY MD] npm install failed:',
-      error.stderr || error.message
+      '[MARY UPDATE] npm install failed:',
+      error.message
     )
 
     return false
   }
 }
 
-// ─────────────────────────────────────────────
-// RESTART
-// ─────────────────────────────────────────────
+// ------------------------------------------------------------
+// Restart
+// ------------------------------------------------------------
 
 function restartBot() {
   setTimeout(() => {
-    process.exit(0)
-  }, 2000)
+    process.exit(1)
+  }, 1200)
 }
 
-// ─────────────────────────────────────────────
-// CHECK UPDATE
-// ─────────────────────────────────────────────
-//
-// This command is purely informational — it tells the
-// owner whether a newer version exists and shows the
-// changelog for it. It never blocks the `update` command.
-// ─────────────────────────────────────────────
+// ------------------------------------------------------------
+// RESTART COMMAND
+// ------------------------------------------------------------
 
-async function checkUpdate(m, conn) {
-  const sent = await conn.sendMessage(
-    m.chat,
-    {
-      text: '🔎 Checking for updates...'
-    },
-    {
-      quoted: m
-    }
+const restart = async (m, { conn }) => {
+  const lang = languageOf(conn)
+
+  const msg = text(
+    lang,
+    '🔄 *Restarting MARY MD...*\n\nPlease wait a moment.',
+    '🔄 *Reiniciando MARY MD...*\n\nEspera un momento.'
   )
 
-  try {
-    const localPackage =
-      await getLocalPackage()
-
-    const remotePackage =
-      await getRemotePackage()
-
-    const localVersion =
-      localPackage.version || '1.0.0'
-
-    const remoteVersion =
-      remotePackage.version || localVersion
-
-    const updateAvailable =
-      compareVersions(
-        remoteVersion,
-        localVersion
-      ) > 0
-
-    if (!updateAvailable) {
-      return await conn.sendMessage(
-        m.chat,
-        {
-          text:
-`╭━━━〔 MARY MD 〕━━━
-┃
-┃ ✅ *Bot is up to date*
-┃
-┃ 📦 Local: *${localVersion}*
-┃ 📦 Remote: *${remoteVersion}*
-┃
-╰━━━━━━━━━━━━━━━━`
-          ,
-          edit: sent.key
-        }
-      )
-    }
-
-    const changelog =
-      await getRemoteChangelog()
-
-    const versionChangelog =
-      getVersionChangelog(
-        changelog,
-        remoteVersion
-      )
-
-    const changelogText = versionChangelog
-      ? formatChangelog(versionChangelog)
-      : 'No changelog available for this version.'
-
-    const message =
-`╭━━━〔 🆕 UPDATE AVAILABLE 〕━━━
-┃
-┃ 📦 Current: *${localVersion}*
-┃ 📦 New: *${remoteVersion}*
-┃
-┃ 📝 *CHANGELOG*
-┃
-${changelogText
-  .split('\n')
-  .map(line => `┃ ${line}`)
-  .join('\n')}
-┃
-┃ Use *update* to install.
-┃
-╰━━━━━━━━━━━━━━━━━━━━`
-
-    return await conn.sendMessage(
-      m.chat,
-      {
-        text: message,
-        edit: sent.key
-      }
-    )
-
-  } catch (error) {
-    console.error(
-      '[CHECKUPDATE ERROR]',
-      error.stack || error.message
-    )
-
-    return await conn.sendMessage(
-      m.chat,
-      {
-        text:
-`❌ *Failed to check updates.*
-
-${error.message}`,
-        edit: sent.key
-      }
-    )
-  }
-}
-
-// ─────────────────────────────────────────────
-// UPDATE BOT
-// ─────────────────────────────────────────────
-//
-// Always pulls and installs the latest files from the
-// repo, regardless of whether package.json's version
-// number changed. A pushed plugin or fix is enough —
-// version bumps are not required for `update` to work.
-// ─────────────────────────────────────────────
-
-async function updateBot(m, conn) {
-  const sent = await conn.sendMessage(
-    m.chat,
-    {
-      text: '⏳ *Updating the bot...*'
-    },
-    {
-      quoted: m
-    }
-  )
-
-  let tempDir = null
-
-  try {
-    tempDir = await fs.mkdtemp(
-      path.join(
-        os.tmpdir(),
-        'mary-md-update-'
-      )
-    )
-
-    const source =
-      await downloadRepository(
-        tempDir
-      )
-
-    await copyUpdatedFiles(
-      source,
-      process.cwd()
-    )
-
-    // Create sessions/, data/, tmp/ if this is a fresh deploy
-    // where they never existed (tar.gz never contains them).
-    await ensureRuntimeDirs()
-
-    // Create .git if this deploy never had one (tar.gz install
-    // has no git history at all).
-    await ensureGitRepo()
-
-    await installDependencies()
-
-    await conn.sendMessage(
-      m.chat,
-      {
-        text: '✅ *Update complete.* Restarting...',
-        edit: sent.key
-      }
-    )
-
-    restartBot()
-
-  } catch (error) {
-    console.error(
-      '[UPDATE ERROR]',
-      error.stack || error.message
-    )
-
-    return await conn.sendMessage(
-      m.chat,
-      {
-        text: '❌ *Update failed.* Please try again later.',
-        edit: sent.key
-      }
-    )
-
-  } finally {
-    if (tempDir) {
-      await fs.rm(
-        tempDir,
-        {
-          recursive: true,
-          force: true
-        }
-      ).catch(() => {})
-    }
-  }
-}
-
-// ─────────────────────────────────────────────
-// RESTART BOT
-// ─────────────────────────────────────────────
-
-async function restartOnly(m, conn) {
   await conn.sendMessage(
     m.chat,
-    {
-      text: '🔄 *Restarting...*'
-    },
-    {
-      quoted: m
-    }
+    { text: msg },
+    { quoted: m }
   )
 
   restartBot()
 }
 
-// ─────────────────────────────────────────────
-// HANDLER
-// ─────────────────────────────────────────────
+restart.help = ['restart']
+restart.tags = ['system']
+restart.command = ['restart']
+restart.ownerOnly = true
 
-const handler = async (
-  m,
-  {
-    conn,
-    command
-  }
-) => {
+// ------------------------------------------------------------
+// CHECKUPDATE COMMAND
+// ------------------------------------------------------------
 
-  if (command === 'checkupdate') {
-    return checkUpdate(
-      m,
-      conn
+const checkupdate = async (m, { conn }) => {
+  const lang = languageOf(conn)
+
+  await conn.sendMessage(
+    m.chat,
+    {
+      react: {
+        text: '🔎',
+        key: m.key
+      }
+    }
+  )
+
+  const processing = await conn.sendMessage(
+    m.chat,
+    {
+      text: text(
+        lang,
+        '🔎 *Checking for updates...*',
+        '🔎 *Comprobando actualizaciones...*'
+      )
+    },
+    { quoted: m }
+  )
+
+  try {
+    const info = await getUpdateInfo()
+
+    if (!info.available) {
+      await conn.sendMessage(
+        m.chat,
+        {
+          text: text(
+            lang,
+            `✅ *MARY MD is up to date!*\n\n📦 Version: *${info.localVersion}*`,
+            `✅ *¡MARY MD está actualizado!*\n\n📦 Versión: *${info.localVersion}*`
+          ),
+          edit: processing.key
+        }
+      )
+
+      await conn.sendMessage(
+        m.chat,
+        {
+          react: {
+            text: '✅',
+            key: m.key
+          }
+        }
+      )
+
+      return
+    }
+
+    const changelog = await getRemoteChangelog()
+
+    let output = text(
+      lang,
+      `🆕 *MARY MD UPDATE AVAILABLE*\n\n`,
+      `🆕 *ACTUALIZACIÓN DE MARY MD DISPONIBLE*\n\n`
     )
-  }
 
-  if (command === 'update') {
-    return updateBot(
-      m,
-      conn
+    output +=
+      `📦 Current: *${info.localVersion}*\n` +
+      `📦 New: *${info.remoteVersion}*\n`
+
+    if (info.changedFiles.length) {
+      output +=
+        `📁 Changed files: *${info.changedFiles.length}*\n`
+    }
+
+    if (changelog) {
+      output += `\n📝 *CHANGELOG*\n\n${changelog}\n`
+    }
+
+    output += '\n'
+
+    output += text(
+      lang,
+      `Use *${conn?.prefix || '.'}update* to install the update.`,
+      `Usa *${conn?.prefix || '.'}update* para instalar la actualización.`
     )
-  }
 
-  if (command === 'restart') {
-    return restartOnly(
-      m,
-      conn
+    await conn.sendMessage(
+      m.chat,
+      {
+        text: output,
+        edit: processing.key
+      }
+    )
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        react: {
+          text: '✅',
+          key: m.key
+        }
+      }
+    )
+  } catch (error) {
+    console.error('[CHECKUPDATE]', error)
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        text: text(
+          lang,
+          `❌ *Update check failed*\n\n${error.message}`,
+          `❌ *No se pudo comprobar la actualización*\n\n${error.message}`
+        ),
+        edit: processing.key
+      }
+    )
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        react: {
+          text: '❌',
+          key: m.key
+        }
+      }
     )
   }
 }
 
-// ─────────────────────────────────────────────
-// MENU
-// ─────────────────────────────────────────────
+checkupdate.help = ['checkupdate']
+checkupdate.tags = ['system']
+checkupdate.command = ['checkupdate', 'checkupdates']
+checkupdate.ownerOnly = true
 
-handler.help = [
-  'checkupdate',
-  'update',
-  'restart'
-]
+// ------------------------------------------------------------
+// UPDATE COMMAND
+// ------------------------------------------------------------
 
-handler.tags = [
-  'owner'
-]
+const update = async (m, { conn }) => {
+  const lang = languageOf(conn)
 
-handler.command = [
-  'checkupdate',
-  'update',
-  'restart'
-]
+  if (fsSync.existsSync(UPDATE_LOCK)) {
+    return conn.sendMessage(
+      m.chat,
+      {
+        text: text(
+          lang,
+          '⚠️ An update is already running.',
+          '⚠️ Ya hay una actualización en proceso.'
+        )
+      },
+      { quoted: m }
+    )
+  }
 
-handler.ownerOnly = true
+  await fs.writeFile(
+    UPDATE_LOCK,
+    JSON.stringify({
+      startedAt: new Date().toISOString()
+    })
+  )
 
-export default handler
+  try {
+    await conn.sendMessage(
+      m.chat,
+      {
+        react: {
+          text: '⬇️',
+          key: m.key
+        }
+      }
+    )
+
+    const status = await conn.sendMessage(
+      m.chat,
+      {
+        text: text(
+          lang,
+          '⏳ *Checking latest MARY MD version...*',
+          '⏳ *Comprobando la última versión de MARY MD...*'
+        )
+      },
+      { quoted: m }
+    )
+
+    const info = await getUpdateInfo()
+
+    if (!info.available) {
+      await conn.sendMessage(
+        m.chat,
+        {
+          text: text(
+            lang,
+            `✅ *Already up to date!*\n\n📦 Version: *${info.localVersion}*`,
+            `✅ *Ya está actualizado!*\n\n📦 Versión: *${info.localVersion}*`
+          ),
+          edit: status.key
+        }
+      )
+
+      await conn.sendMessage(
+        m.chat,
+        {
+          react: {
+            text: '✅',
+            key: m.key
+          }
+        }
+      )
+
+      return
+    }
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        text: text(
+          lang,
+          `⬇️ *Downloading update...*\n\n📦 ${info.localVersion} → ${info.remoteVersion}\n📁 ${info.changedFiles.length} files`,
+          `⬇️ *Descargando actualización...*\n\n📦 ${info.localVersion} → ${info.remoteVersion}\n📁 ${info.changedFiles.length} archivos`
+        ),
+        edit: status.key
+      }
+    )
+
+    // Fetch tree again so we have complete remote file list.
+    const tree = await getRemoteTree()
+
+    const remotePaths = tree
+      .map(x => normalizePath(x.path))
+      .filter(shouldUpdate)
+
+    let downloaded = 0
+    let failed = 0
+
+    // Download sequentially to reduce RAM/CPU usage on Pterodactyl.
+    for (const file of remotePaths) {
+      try {
+        const didDownload = await downloadFile(file)
+
+        if (didDownload) {
+          downloaded++
+        }
+      } catch (error) {
+        failed++
+
+        console.error(
+          `[MARY UPDATE] Failed: ${file}`,
+          error.message
+        )
+      }
+    }
+
+    if (failed > 0) {
+      throw new Error(
+        `${failed} file(s) failed to download.`
+      )
+    }
+
+    // Remove deleted plugins/lib files.
+    await removeDeletedFiles(remotePaths)
+
+    // Update npm packages if package.json changed.
+    const packageChanged = info.changedFiles.some(
+      x => x.path === 'package.json'
+    )
+
+    let npmStatus = ''
+
+    if (packageChanged) {
+      await conn.sendMessage(
+        m.chat,
+        {
+          text: text(
+            lang,
+            '📦 Installing updated dependencies...',
+            '📦 Instalando las dependencias actualizadas...'
+          ),
+          edit: status.key
+        }
+      )
+
+      const npmOK = await installDependencies()
+
+      npmStatus = npmOK
+        ? text(
+            lang,
+            '\n📦 Dependencies installed.',
+            '\n📦 Dependencias instaladas.'
+          )
+        : text(
+            lang,
+            '\n⚠️ Dependencies could not be installed automatically.',
+            '\n⚠️ No se pudieron instalar automáticamente las dependencias.'
+          )
+    }
+
+    const newChangelog = await getRemoteChangelog()
+
+    let finalMessage = text(
+      lang,
+      `✅ *MARY MD UPDATED SUCCESSFULLY!*\n\n📦 Version: *${info.remoteVersion}*\n📁 Files updated: *${downloaded}*${npmStatus}\n\n🔄 *Restarting bot...*`,
+      `✅ *¡MARY MD SE ACTUALIZÓ CORRECTAMENTE!*\n\n📦 Versión: *${info.remoteVersion}*\n📁 Archivos actualizados: *${downloaded}*${npmStatus}\n\n🔄 *Reiniciando bot...*`
+    )
+
+    if (newChangelog) {
+      finalMessage += `\n\n📝 *CHANGELOG*\n\n${newChangelog}`
+    }
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        text: finalMessage,
+        edit: status.key
+      }
+    )
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        react: {
+          text: '✅',
+          key: m.key
+        }
+      }
+    )
+
+    // Give WhatsApp a moment to send the message.
+    setTimeout(() => {
+      restartBot()
+    }, 1500)
+
+  } catch (error) {
+    console.error('[MARY UPDATE]', error)
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        text: text(
+          lang,
+          `❌ *UPDATE FAILED*\n\n${error.message}\n\nYour session and personal data were not touched.`,
+          `❌ *ACTUALIZACIÓN FALLIDA*\n\n${error.message}\n\nTu sesión y datos personales no fueron modificados.`
+        )
+      },
+      { quoted: m }
+    )
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        react: {
+          text: '❌',
+          key: m.key
+        }
+      }
+    )
+  } finally {
+    try {
+      await fs.unlink(UPDATE_LOCK)
+    } catch {}
+  }
+}
+
+update.help = ['update']
+update.tags = ['system']
+update.command = ['update']
+update.ownerOnly = true
+
+// ------------------------------------------------------------
+// EXPORT
+// ------------------------------------------------------------
+
+export {
+  restart,
+  checkupdate,
+  update
+}
+
+export default update
