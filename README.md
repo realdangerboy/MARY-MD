@@ -91,10 +91,7 @@ Incluye comandos útiles, funciones de gestión de grupos, herramientas de segur
 # Installation
 
 ```bash
-git clone YOUR_REPOSITORY_LINK
-cd MARY-MD
-npm install
-npm start
+SOON...
 
 ```
 
