@@ -1,4 +1,3 @@
-
 const config = {
   botName: 'ϻᴀꭆỿ𝀽ᴹᴰ',
   ownerName: 'ᴰᴬᴺʙᷛᷛᴏͤͤʏᷢᷢ 𓆰♕𓆪',
@@ -17,8 +16,7 @@ const config = {
     windowMs: 8000,
     muteMs: 15000,
   },
-  groupLink: 'https://whatsapp.com/channel/0029VbChrMwLY6dFOA9PxV2G',
-  packname: 'MARY MD',
+  packname: 'ϻᴀꭆỿ𝀽ᴹᴰ',
   author: 'ᴰᴬᴺʙᷛᷛᴏͤͤʏᷢᷢ 𓆰♕𓆪',
 }
 export default config
