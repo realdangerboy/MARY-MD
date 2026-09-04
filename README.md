@@ -11,7 +11,7 @@
 ---
 
 <div align="center">
-━━━━ MARY MD WhatsApp Bot Project ━━━━
+━━━ MARY MD WhatsApp Bot Project ━━━
 
 </div>
 
@@ -31,7 +31,7 @@ Incluye comandos útiles, funciones de gestión de grupos, herramientas de segur
 
 ---
 
-# Features | Características
+# Features 
 ━━━━━━━━━━ 🇺🇸 English ━━━━━━━━━━
 
 🔥 WhatsApp Bot  
@@ -110,5 +110,6 @@ Language Support:
 Disclaimer
 This project is created for educational purposes only.
 Use responsibly and follow WhatsApp rules.
+
 Este proyecto fue creado únicamente con fines educativos.
 Úsalo responsablemente y respeta las reglas de WhatsApp.
