@@ -32,7 +32,7 @@ Incluye comandos útiles, funciones de gestión de grupos, herramientas de segur
 ---
 
 # Features | Características
-━━━━━━━━━━━━━━━━━━━━━━━━━━ 🇺🇸 English Features ━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━ 🇺🇸 English Features ━━━━━━━━━━
 
 🔥 WhatsApp Bot  
 🌐 English Language Support  
