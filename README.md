@@ -11,7 +11,7 @@
 ---
 
 <div align="center">
-━━━━━━━━━━━━━━━━━━━━━━━━━━ MARY MD WhatsApp Bot Project ━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━ MARY MD WhatsApp Bot Project ━━━━
 
 </div>
 
@@ -32,7 +32,7 @@ Incluye comandos útiles, funciones de gestión de grupos, herramientas de segur
 ---
 
 # Features | Características
-━━━━━━━━━━ 🇺🇸 English Features ━━━━━━━━━━
+━━━━━━━━━━ 🇺🇸 English ━━━━━━━━━━
 
 🔥 WhatsApp Bot  
 🌐 English Language Support  
@@ -43,7 +43,7 @@ Incluye comandos útiles, funciones de gestión de grupos, herramientas de segur
 👋 Welcome & Goodbye System  
 📥 Media Downloader  
 🚀 24/7 Hosting Ready  
-━━━━━━━━━━━━━━━━━━━━━━━━━━ 🇪🇸 Características ━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━ 🇪🇸 Español ━━━━━━━━━━
 
 🔥 Bot de WhatsApp  
 🌐 Soporte de idioma inglés  
