@@ -62,7 +62,7 @@ Incluye comandos útiles, funciones de gestión de grupos, herramientas de segur
 
 ## Optiklink Panel
 
-[![Deploy with Optiklink](https://img.shields.io/badge/Deploy%20with-Optiklink-blue?style=for-the-badge)](YOUR_OPTIKLINK_LINK)
+[![Deploy with Optiklink](https://img.shields.io/badge/Deploy%20with-Optiklink-blue?style=for-the-badge)](https://optiklink.net/home)
 
 
 ## Bot Hosting
