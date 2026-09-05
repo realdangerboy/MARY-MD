@@ -67,12 +67,12 @@ Incluye comandos útiles, funciones de gestión de grupos, herramientas de segur
 
 ## Bot Hosting
 
-[![Deploy with Bot Hosting](https://img.shields.io/badge/Deploy%20with-Bot%20Hosting-green?style=for-the-badge)](YOUR_BOT_HOSTING_LINK)
+[![Deploy with Bot Hosting](https://img.shields.io/badge/Deploy%20with-Bot%20Hosting-green?style=for-the-badge)](https://bot-hosting.net/login?utm_source=chatgpt.com)
 
 
 ## Katabump
 
-[![Deploy with Katabump](https://img.shields.io/badge/Deploy%20with-Katabump-purple?style=for-the-badge)](YOUR_KATABUMP_LINK)
+[![Deploy with Katabump](https://img.shields.io/badge/Deploy%20with-Katabump-purple?style=for-the-badge)](https://dashboard.katabump.com/auth/login)
 
 ---
 
