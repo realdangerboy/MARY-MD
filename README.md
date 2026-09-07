@@ -58,7 +58,7 @@ Incluye comandos útiles, funciones de gestión de grupos, herramientas de segur
 ---
 
 # Deploy MARY MD
-[![Deploy Tutorial](https://img.shields.io/badge/YouTube-Deploy%20Tutorial-red?style=for-the-badge&logo=youtube)](YOUR_YOUTUBE_VIDEO_LINK)
+[![Deploy Tutorial](https://img.shields.io/badge/YouTube-Deploy%20Tutorial-red?style=for-the-badge&logo=youtube)](https://youtu.be/7jPWJCqdTWg?si=IHZrlbB_n9PpzMJG)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━ DEPLOY OPTIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## Optiklink Panel
 
