@@ -1,7 +1,7 @@
 const config = {
   botName: 'ϻᴀꭆỿ𝀽ᴹᴰ',
   ownerName: 'ᴰᴬᴺʙᷛᷛᴏͤͤʏᷢᷢ 𓆰♕𓆪',
-  version: '1.0.0',
+  version: '1.0.1',
   prefix: /^[.#/!]/,
   ownerNumber: [],        // Leave empty = bot's own number becomes owner automatically
   defaultLanguage: 'en', // 'en' or 'es'
