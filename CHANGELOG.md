@@ -4,6 +4,8 @@
 
 ### Added
 - antiseximage added ✅
+- ai Added ✅
+- setvar Added ✅ 
 
 ### Fixed
 - System Update
