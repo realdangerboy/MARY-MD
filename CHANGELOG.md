@@ -9,3 +9,4 @@
 
 ### Fixed
 - System Update
+- Menu Channel Button fixed 🖤 
