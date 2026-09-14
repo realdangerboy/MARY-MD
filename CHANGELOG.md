@@ -5,7 +5,9 @@
 ### Added
 - antiseximage added ✅
 - ai Added ✅
-- setvar Added ✅ 
+- setvar Added ✅
+- Autogreet Added ✅
+- attp Sticker added ✅ 
 
 ### Fixed
 - System Update
