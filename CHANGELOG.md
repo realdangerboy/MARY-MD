@@ -3,9 +3,7 @@
 ## 1.0.2
 
 ### Added
-- antiseximage added ✅
-- ai Added ✅
-- setvar Added ✅
+- Pinterest Added ✅
 - Autogreet Added ✅
 - Sonu Ai Song added ✅ 
 
