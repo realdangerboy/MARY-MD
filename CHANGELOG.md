@@ -7,8 +7,9 @@
 - ai Added ✅
 - setvar Added ✅
 - Autogreet Added ✅
-- attp Sticker added ✅ 
+- Sonu Ai Song added ✅ 
 
 ### Fixed
 - System Update
+- Ai Fixed 👏🏻
 - Menu Channel Button fixed 🖤 
