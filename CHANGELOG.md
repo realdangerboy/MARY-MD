@@ -1,6 +1,6 @@
 # MARY MD Changelog
 
-## 1.0.2
+## 1.0.3
 
 ### Added
 - Pinterest Added ✅
@@ -10,4 +10,4 @@
 ### Fixed
 - System Update
 - Ai Fixed 👏🏻
-- Menu Channel Button fixed 🖤 
+- Antilink Improvements 🖤 
