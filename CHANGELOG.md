@@ -5,9 +5,10 @@
 ### Added
 - Pinterest Added ✅
 - Autogreet Added ✅
-- Sonu Ai Song added ✅ 
+- Sonu Ai Song added ✅
+- Url Added ✅
 
 ### Fixed
 - System Update
-- Ai Fixed 👏🏻
+- Alive Video Changed 🤌🏻💕
 - Antilink Improvements 🖤 
