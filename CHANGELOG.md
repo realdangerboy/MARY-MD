@@ -7,8 +7,8 @@
 - Autogreet Added ✅
 - Sonu Ai Song added ✅
 - Url Added ✅
+- Transcribe Voice Added ✅
+- More Features Added ✅ 
 
 ### Fixed
-- System Update
-- Alive Video Changed 🤌🏻💕
-- Antilink Improvements 🖤 
+- All Antilink Fixed 🫀
