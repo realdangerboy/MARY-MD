@@ -1,7 +1,7 @@
 # <p align="center"><b>MARY MD</b></p>
 
 <p align="center">
-<img src="https://i.ibb.co/9Hn2zkKy/file-00000000973481f5a9c7de038183683a.png" width="400"/>
+<img src="https://i.ibb.co/ks2Hk612/a315d0339587.jpg" width="400"/>
 </p>
 
 <p align="center">
