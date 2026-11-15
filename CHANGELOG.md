@@ -4,6 +4,8 @@
 
 ### Added
 - Pinterest Added ✅
+- DEEP AI added ✅
+- Set full profile pic and group ✅ 
 - Transcribe Voice Added ✅
 - More Features Added ✅ 
 
