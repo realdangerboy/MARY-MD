@@ -1,12 +1,12 @@
 # MARY MD Changelog
 
-## 1.0.5
+## 1.0.6
 
 ### Added
 - Pinterest Added ✅
 - DEEP AI added ✅
 - Set full profile pic and group ✅ 
-- Transcribe Voice Added ✅
+- Multi Pair added ✅
 - More Features Added ✅ 
 
 ### Fixed
